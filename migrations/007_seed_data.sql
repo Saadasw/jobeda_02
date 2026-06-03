@@ -25,7 +25,7 @@
 -- ACCOUNTING: every financial insert carries tenant_id; DB triggers auto-post
 -- the double-entry journal (tenant-aware, account lookups scoped by tenant).
 --
--- DEMO LOGIN:  owner@jobeda.test  /  Owner@123   (role: owner)
+-- DEMO LOGIN:  owner@jobeda.com  /  Owner@123   (role: owner)
 -- ============================================================================
 
 DO $$
@@ -181,11 +181,11 @@ BEGIN
     -- ── 5. Owner user (one per tenant) ────────────────────────────
     SELECT id INTO v_owner_role FROM roles WHERE name = 'owner';
     SELECT id INTO v_user FROM users
-     WHERE tenant_id = v_tenant AND email_lower = 'owner@jobeda.test';
+     WHERE tenant_id = v_tenant AND email_lower = 'owner@jobeda.com';
     IF v_user IS NULL THEN
         IF NOT EXISTS (SELECT 1 FROM users WHERE tenant_id = v_tenant AND role_id = v_owner_role) THEN
             INSERT INTO users (tenant_id, email, password_hash, full_name, phone, role_id, is_active)
-            VALUES (v_tenant, 'owner@jobeda.test',
+            VALUES (v_tenant, 'owner@jobeda.com',
                     '$2b$12$xyiCD4LuiKek0WIuUuFWH.H.dHFCENH5eIGsMl3/fUvHhZelvlnrC',
                     'Madrasa Owner', '01700000000', v_owner_role, TRUE)
             RETURNING id INTO v_user;
@@ -507,7 +507,7 @@ BEGIN
          'Payment received for Khadija Akter. Receipt PAY-2026-0004. Thank you.', 'sent', 'ssl_wireless',
          '2026-01-10 10:05:00', v_user);
 
-    RAISE NOTICE '007 seed: demo data rebuilt for tenant % (login owner@jobeda.test / Owner@123).', v_tenant;
+    RAISE NOTICE '007 seed: demo data rebuilt for tenant % (login owner@jobeda.com / Owner@123).', v_tenant;
 END $$;
 
 -- ============================================================================
