@@ -1,0 +1,12 @@
+-- Migration 002: Update Students Table
+-- Adds academic references, soft delete, and audit fields
+
+ALTER TABLE students
+ADD COLUMN IF NOT EXISTS class_id INT REFERENCES classes(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS section_id INT REFERENCES sections(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS academic_year_id INT REFERENCES academic_years(id) ON DELETE SET NULL,
+ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL,
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NULL,
+ADD COLUMN IF NOT EXISTS created_by TEXT NULL,
+ADD COLUMN IF NOT EXISTS updated_by TEXT NULL;

@@ -1,0 +1,46 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ─── Virtual Environment ──────────────────────────────────
+venv/
+.venv/
+env/
+
+# ─── Environment Variables / Secrets ──────────────────────
+.env
+.env.*
+.env.example
+
+# ─── IDE / Editor ─────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS Files ─────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ─── Distribution / Build ────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ─── Test / Type-check caches ─────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ─── Logs ─────────────────────────────────────────────────
+*.log
+
+# ─── Claude Code local state (worktrees, local settings) ──
+.claude/

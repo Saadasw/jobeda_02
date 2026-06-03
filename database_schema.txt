@@ -1,0 +1,337 @@
+CREATE TYPE account_type AS ENUM ('asset', 'liability', 'equity', 'revenue', 'expense');
+CREATE TYPE payment_method AS ENUM ('cash', 'bank');
+
+
+CREATE TABLE accounts (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    type account_type NOT NULL,
+    parent_id INT REFERENCES accounts(id) ON DELETE SET NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE journal_entries (
+    id SERIAL PRIMARY KEY,
+    date DATE NOT NULL,
+    description TEXT,
+    reference_type TEXT,
+    reference_id INT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE journal_lines (
+    id SERIAL PRIMARY KEY,
+    journal_id INT NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+    account_id INT NOT NULL REFERENCES accounts(id),
+    debit NUMERIC(12,2) DEFAULT 0 CHECK (debit >= 0),
+    credit NUMERIC(12,2) DEFAULT 0 CHECK (credit >= 0),
+    CHECK (debit = 0 OR credit = 0)
+);
+CREATE TABLE students (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    class TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE employees (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL, -- teacher / staff / admin
+    phone TEXT,
+    salary NUMERIC(12,2),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE fee_assignments (
+    id SERIAL PRIMARY KEY,
+    student_id INT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    month DATE NOT NULL,
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    account_id INT NOT NULL REFERENCES accounts(id), -- usually Tuition Fees
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE payments (
+    id SERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(id) ON DELETE SET NULL,
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    date DATE NOT NULL,
+    method payment_method NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE payment_allocations (
+    id SERIAL PRIMARY KEY,
+    payment_id INT NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+    fee_assignment_id INT NOT NULL REFERENCES fee_assignments(id) ON DELETE CASCADE,
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0)
+);
+CREATE TABLE salary_payments (
+    id SERIAL PRIMARY KEY,
+    employee_id INT NOT NULL REFERENCES employees(id),
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    date DATE NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE TABLE expenses (
+    id SERIAL PRIMARY KEY,
+    account_id INT NOT NULL REFERENCES accounts(id),
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    date DATE NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE OR REPLACE FUNCTION create_journal_entry(
+    p_date DATE,
+    p_description TEXT
+) RETURNS INT AS $$
+DECLARE
+    v_journal_id INT;
+BEGIN
+    INSERT INTO journal_entries (date, description)
+    VALUES (p_date, p_description)
+    RETURNING id INTO v_journal_id;
+
+    RETURN v_journal_id;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION add_journal_line(
+    p_journal_id INT,
+    p_account_name TEXT,
+    p_debit NUMERIC,
+    p_credit NUMERIC
+) RETURNS VOID AS $$
+DECLARE
+    v_account_id INT;
+BEGIN
+    SELECT id INTO v_account_id
+    FROM accounts
+    WHERE name = p_account_name
+    LIMIT 1;
+
+    IF v_account_id IS NULL THEN
+        RAISE EXCEPTION 'Account not found: %', p_account_name;
+    END IF;
+
+    INSERT INTO journal_lines (journal_id, account_id, debit, credit)
+    VALUES (p_journal_id, v_account_id, p_debit, p_credit);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION trg_fee_assignment_journal()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_journal_id INT;
+BEGIN
+    v_journal_id := create_journal_entry(
+        NEW.month,
+        'Fee assigned for student ' || NEW.student_id
+    );
+
+    PERFORM add_journal_line(v_journal_id, 'Accounts Receivable', NEW.amount, 0);
+    PERFORM add_journal_line(v_journal_id, 'Tuition Fees', 0, NEW.amount);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER fee_assignment_after_insert
+AFTER INSERT ON fee_assignments
+FOR EACH ROW
+EXECUTE FUNCTION trg_fee_assignment_journal();
+
+CREATE OR REPLACE FUNCTION trg_payment_journal()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_journal_id INT;
+BEGIN
+    v_journal_id := create_journal_entry(
+        NEW.date,
+        'Payment received from student ' || NEW.student_id
+    );
+
+    PERFORM add_journal_line(v_journal_id, 'Cash', NEW.amount, 0);
+    PERFORM add_journal_line(v_journal_id, 'Accounts Receivable', 0, NEW.amount);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payment_after_insert
+AFTER INSERT ON payments
+FOR EACH ROW
+EXECUTE FUNCTION trg_payment_journal();
+
+CREATE OR REPLACE FUNCTION trg_expense_journal()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_journal_id INT;
+    v_account_name TEXT;
+BEGIN
+    SELECT name INTO v_account_name FROM accounts WHERE id = NEW.account_id;
+
+    v_journal_id := create_journal_entry(
+        NEW.date,
+        'Expense: ' || v_account_name
+    );
+
+    PERFORM add_journal_line(v_journal_id, v_account_name, NEW.amount, 0);
+    PERFORM add_journal_line(v_journal_id, 'Cash', 0, NEW.amount);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER expense_after_insert
+AFTER INSERT ON expenses
+FOR EACH ROW
+EXECUTE FUNCTION trg_expense_journal();
+
+CREATE OR REPLACE FUNCTION trg_salary_journal()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_journal_id INT;
+BEGIN
+    v_journal_id := create_journal_entry(
+        NEW.date,
+        'Salary paid to employee ' || NEW.employee_id
+    );
+
+    PERFORM add_journal_line(v_journal_id, 'Salary Expense', NEW.amount, 0);
+    PERFORM add_journal_line(v_journal_id, 'Cash', 0, NEW.amount);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER salary_after_insert
+AFTER INSERT ON salary_payments
+FOR EACH ROW
+EXECUTE FUNCTION trg_salary_journal();
+
+CREATE OR REPLACE FUNCTION trg_income_journal()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_journal_id INT;
+    v_account_name TEXT;
+BEGIN
+    SELECT name INTO v_account_name FROM accounts WHERE id = NEW.account_id;
+
+    v_journal_id := create_journal_entry(
+        NEW.date,
+        'Income: ' || v_account_name
+    );
+
+    PERFORM add_journal_line(v_journal_id, 'Cash', NEW.amount, 0);
+    PERFORM add_journal_line(v_journal_id, v_account_name, 0, NEW.amount);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS payment_after_insert ON payments;
+
+
+CREATE OR REPLACE FUNCTION trg_payment_allocation_journal()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_payment RECORD;
+    v_journal_id INT;
+BEGIN
+    SELECT * INTO v_payment FROM payments WHERE id = NEW.payment_id;
+
+    v_journal_id := create_journal_entry(
+        v_payment.date,
+        'Payment allocation for student ' || v_payment.student_id
+    );
+
+    -- Dr Cash
+    PERFORM add_journal_line(v_journal_id, 'Cash', NEW.amount, 0);
+
+    -- Cr Accounts Receivable
+    PERFORM add_journal_line(v_journal_id, 'Accounts Receivable', 0, NEW.amount);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payment_allocation_after_insert
+AFTER INSERT ON payment_allocations
+FOR EACH ROW
+EXECUTE FUNCTION trg_payment_allocation_journal();
+
+CREATE OR REPLACE FUNCTION trg_payment_advance_journal()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_allocated NUMERIC;
+    v_remaining NUMERIC;
+    v_journal_id INT;
+BEGIN
+    SELECT COALESCE(SUM(amount), 0)
+    INTO v_allocated
+    FROM payment_allocations
+    WHERE payment_id = NEW.id;
+
+    v_remaining := NEW.amount - v_allocated;
+
+    IF v_remaining > 0 THEN
+        v_journal_id := create_journal_entry(
+            NEW.date,
+            'Advance payment from student ' || NEW.student_id
+        );
+
+        -- Dr Cash
+        PERFORM add_journal_line(v_journal_id, 'Cash', v_remaining, 0);
+
+        -- Cr Unearned Revenue
+        PERFORM add_journal_line(v_journal_id, 'Unearned Revenue', 0, v_remaining);
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER payment_after_insert_advance
+AFTER INSERT ON payments
+FOR EACH ROW
+EXECUTE FUNCTION trg_payment_advance_journal();
+
+
+CREATE OR REPLACE FUNCTION finalize_payment(p_payment_id INT)
+RETURNS VOID AS $$
+DECLARE
+    v_payment RECORD;
+    v_allocated NUMERIC;
+    v_remaining NUMERIC;
+    v_journal_id INT;
+BEGIN
+    SELECT * INTO v_payment FROM payments WHERE id = p_payment_id;
+
+    SELECT COALESCE(SUM(amount), 0)
+    INTO v_allocated
+    FROM payment_allocations
+    WHERE payment_id = p_payment_id;
+
+    v_remaining := v_payment.amount - v_allocated;
+
+    IF v_remaining > 0 THEN
+        v_journal_id := create_journal_entry(
+            v_payment.date,
+            'Advance payment from student ' || v_payment.student_id
+        );
+
+        PERFORM add_journal_line(v_journal_id, 'Cash', v_remaining, 0);
+        PERFORM add_journal_line(v_journal_id, 'Unearned Revenue', 0, v_remaining);
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+CREATE TABLE fee_types (
+    id SERIAL PRIMARY KEY,
+    name TEXT,
+    is_recurring BOOLEAN,
+    account_id INT REFERENCES accounts(id)
+);
+
+
+ALTER TABLE fee_assignments
+ADD COLUMN fee_type_id INT REFERENCES fee_types(id);
