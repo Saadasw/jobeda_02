@@ -59,7 +59,7 @@ DECLARE
 
     -- exams / subjects
     v_quran INT; v_tajweed INT; v_arabic INT; v_fiqh INT;
-    v_scale INT; v_exam INT;
+    v_scale INT; v_exam INT; v_jid INT;
 
     -- loop helpers
     v_stu RECORD; v_es RECORD; v_emp RECORD;
@@ -258,6 +258,14 @@ BEGIN
     DELETE FROM income              WHERE tenant_id = v_tenant;
     DELETE FROM students            WHERE tenant_id = v_tenant;
     DELETE FROM employees           WHERE tenant_id = v_tenant;
+
+    -- ── Opening cash balance ──────────────────────────────────────
+    --   A real madrasa starts with reserves (donations / waqf / founder
+    --   capital) before it pays any salaries. Without this, Cash would be
+    --   deeply negative. Posts Dr Cash / Cr Opening Balance (equity).
+    v_jid := create_journal_entry('2026-01-01', 'Opening cash balance', v_tenant);
+    PERFORM add_journal_line(v_jid, 'Cash',            200000, 0,      v_tenant);
+    PERFORM add_journal_line(v_jid, 'Opening Balance', 0,      200000, v_tenant);
 
     -- ── 7. Students ───────────────────────────────────────────────
     INSERT INTO students (name, class, class_id, section_id, academic_year_id, tenant_id)
