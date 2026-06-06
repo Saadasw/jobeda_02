@@ -10,10 +10,11 @@ Security invariants (migration 020/023):
     The plaintext secret is returned to the caller once and never again.
   * auth_audit_log writes are best-effort and never block a flow.
 """
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from database import supabase
 from dependencies import get_current_user
@@ -28,7 +29,7 @@ from security import (
     hash_password, verify_password,
     generate_secret_token, hash_token,
     create_access_token, refresh_token_expiry,
-    ACCESS_TOKEN_EXPIRE_MINUTES,
+    ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS,
 )
 from services.auth_service import audit_log, resolve_tenant_id
 
@@ -36,6 +37,31 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 MAX_FAILED_ATTEMPTS = 5
 LOCK_MINUTES = 15
+
+# The refresh token is delivered primarily as an httpOnly cookie (the browser
+# never exposes it to JS). A JSON-body field remains as a fallback for
+# non-browser clients. `Secure` is gated to production via COOKIE_SECURE so the
+# cookie still works over http://localhost in dev.
+REFRESH_COOKIE_NAME = "refresh_token"
+_COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=token,
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600,
+        httponly=True,
+        secure=_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME, path="/", httponly=True, samesite="lax"
+    )
 
 _USER_COLUMNS = (
     "id, tenant_id, email, full_name, phone, role_id, is_active, last_login, "
@@ -87,7 +113,11 @@ def _is_locked(user: dict) -> bool:
         return False
 
 
-def _issue_tokens(user: dict, request: Optional[Request] = None) -> TokenResponse:
+def _issue_tokens(
+    user: dict,
+    request: Optional[Request] = None,
+    response: Optional[Response] = None,
+) -> TokenResponse:
     """Mint an access JWT + a refresh token (storing only the refresh hash)."""
     access = create_access_token(
         user_id=user["id"],
@@ -107,6 +137,11 @@ def _issue_tokens(user: dict, request: Optional[Request] = None) -> TokenRespons
         row["user_agent"] = request.headers.get("user-agent")
     supabase.table("refresh_tokens").insert(row).execute()
 
+    # Primary delivery is the httpOnly cookie; the body still carries the token
+    # for backward compatibility with non-browser clients.
+    if response is not None:
+        _set_refresh_cookie(response, refresh_plain)
+
     return TokenResponse(
         access_token=access,
         refresh_token=refresh_plain,
@@ -124,7 +159,7 @@ def _owner_role_id() -> int:
 
 # ─── Registration ────────────────────────────────────────────────────────────
 @router.post("/register", response_model=TokenResponse, status_code=201)
-def register(payload: RegisterRequest, request: Request):
+def register(payload: RegisterRequest, request: Request, response: Response):
     """
     Founder onboarding: create a tenant, seed its defaults, and create the
     owner user. Returns access + refresh tokens for the new owner.
@@ -169,12 +204,12 @@ def register(payload: RegisterRequest, request: Request):
     user = _flatten_role(_fetch_user(user_resp.data[0]["id"]))
     audit_log("login_success", tenant_id=tenant_id, user_id=user["id"],
               detail={"via": "register"}, request=request)
-    return _issue_tokens(user, request)
+    return _issue_tokens(user, request, response)
 
 
 # ─── Login ───────────────────────────────────────────────────────────────────
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, request: Request):
+def login(payload: LoginRequest, request: Request, response: Response):
     """Authenticate by email + password (tenant-scoped)."""
     tenant_id = resolve_tenant_id(payload.tenant_id, payload.tenant_slug)
     if (payload.tenant_id or payload.tenant_slug) and tenant_id is None:
@@ -222,14 +257,23 @@ def login(payload: LoginRequest, request: Request):
         "last_login": _now_iso(),
     }).eq("id", user["id"]).execute()
     audit_log("login_success", tenant_id=user["tenant_id"], user_id=user["id"], request=request)
-    return _issue_tokens(user, request)
+    return _issue_tokens(user, request, response)
 
 
 # ─── Refresh (with rotation) ─────────────────────────────────────────────────
 @router.post("/refresh", response_model=TokenResponse)
-def refresh(payload: RefreshRequest, request: Request):
-    """Exchange a valid refresh token for a new access token (rotates the refresh token)."""
-    token_hash = hash_token(payload.refresh_token)
+def refresh(request: Request, response: Response, payload: Optional[RefreshRequest] = None):
+    """Exchange a valid refresh token for a new access token (rotates the refresh token).
+
+    The token is read from the httpOnly cookie, falling back to the request body
+    for non-browser clients.
+    """
+    presented = request.cookies.get(REFRESH_COOKIE_NAME) or (
+        payload.refresh_token if payload else None
+    )
+    if not presented:
+        raise HTTPException(status_code=401, detail="No refresh token provided")
+    token_hash = hash_token(presented)
     resp = (
         supabase.table("refresh_tokens")
         .select("id, user_id, tenant_id, expires_at, revoked_at")
@@ -250,14 +294,23 @@ def refresh(payload: RefreshRequest, request: Request):
     supabase.table("refresh_tokens").update(
         {"revoked_at": _now_iso()}
     ).eq("id", token_row["id"]).execute()
-    return _issue_tokens(user, request)
+    return _issue_tokens(user, request, response)
 
 
 # ─── Logout ──────────────────────────────────────────────────────────────────
 @router.post("/logout")
-def logout(payload: LogoutRequest, request: Request):
-    """Revoke a refresh token. Idempotent — unknown tokens return success."""
-    token_hash = hash_token(payload.refresh_token)
+def logout(request: Request, response: Response, payload: Optional[LogoutRequest] = None):
+    """Revoke the refresh token (from cookie or body) and clear the cookie.
+
+    Idempotent — unknown or missing tokens still return success.
+    """
+    presented = request.cookies.get(REFRESH_COOKIE_NAME) or (
+        payload.refresh_token if payload else None
+    )
+    _clear_refresh_cookie(response)
+    if not presented:
+        return {"message": "Logged out"}
+    token_hash = hash_token(presented)
     resp = (
         supabase.table("refresh_tokens")
         .update({"revoked_at": _now_iso()})
@@ -366,7 +419,7 @@ def change_password(
 
 # ─── Invitation acceptance ───────────────────────────────────────────────────
 @router.post("/accept-invitation", response_model=TokenResponse, status_code=201)
-def accept_invitation(payload: AcceptInvitationRequest, request: Request):
+def accept_invitation(payload: AcceptInvitationRequest, request: Request, response: Response):
     """Accept a pending invitation: create the user and log them in."""
     token_hash = hash_token(payload.token)
     resp = (
@@ -407,4 +460,4 @@ def accept_invitation(payload: AcceptInvitationRequest, request: Request):
     user = _fetch_user(user_resp.data[0]["id"])
     audit_log("invitation_accepted", tenant_id=invite["tenant_id"], user_id=user["id"],
               request=request)
-    return _issue_tokens(user, request)
+    return _issue_tokens(user, request, response)

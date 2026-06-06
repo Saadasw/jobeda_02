@@ -37,11 +37,13 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    # Normally the refresh token is read from the httpOnly cookie; this body
+    # field is an optional fallback for non-browser API clients.
+    refresh_token: Optional[str] = None
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 
 # ─── Password reset ──────────────────────────────────────────────────────────
