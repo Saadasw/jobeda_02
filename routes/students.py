@@ -25,62 +25,82 @@ def list_students(
     class_id: Optional[int] = Query(default=None),
     section_id: Optional[int] = Query(default=None),
     academic_year_id: Optional[int] = Query(default=None),
+    status: Optional[str] = Query(default=None, description="Current-enrollment status"),
+    has_dues: bool = Query(default=False, description="Only students with outstanding due"),
     search: Optional[str] = Query(default=None),
     tenant_id: str = Depends(get_tenant_id),
 ):
     """
-    List all active students with pagination, filters, and financial summary.
-    Each student includes: total_fee, total_paid, due, advance, last_payment_date.
-    Uses the student_due_summary view for financial columns.
+    List active students with pagination, filters, and financial summary.
+    Each row includes the section name + total_fee/total_paid/due/advance/last_payment_date.
+    `status` filters by the student's current-year enrollment status; `has_dues`
+    keeps only students with an outstanding balance.
     """
     try:
-        # Count query (from students table for accurate filter support)
-        count_query = supabase.table("students").select("id", count="exact").eq("tenant_id", tenant_id).eq("is_deleted", False)
-        if class_id:
-            count_query = count_query.eq("class_id", class_id)
-        if section_id:
-            count_query = count_query.eq("section_id", section_id)
-        if academic_year_id:
-            count_query = count_query.eq("academic_year_id", academic_year_id)
-        if search:
-            count_query = count_query.ilike("name", f"%{search}%")
-        count_resp = count_query.execute()
+        # Filters that live in other tables -> resolve to a set of student ids.
+        # None means "no id restriction".
+        allowed_ids = None
+
+        if status:
+            enr = (
+                supabase.table("student_enrollments").select("student_id")
+                .eq("tenant_id", tenant_id).eq("is_current", True).eq("status", status)
+                .execute()
+            )
+            allowed_ids = {r["student_id"] for r in enr.data}
+
+        if has_dues:
+            due = (
+                supabase.table("student_due_summary").select("id")
+                .eq("tenant_id", tenant_id).gt("due", 0).execute()
+            )
+            due_ids = {r["id"] for r in due.data}
+            allowed_ids = due_ids if allowed_ids is None else (allowed_ids & due_ids)
+
+        if allowed_ids is not None and not allowed_ids:
+            return {"data": [], "page": page, "limit": limit, "total": 0, "total_pages": 1}
+
+        def _filtered(q):
+            q = q.eq("tenant_id", tenant_id).eq("is_deleted", False)
+            if class_id:
+                q = q.eq("class_id", class_id)
+            if section_id:
+                q = q.eq("section_id", section_id)
+            if academic_year_id:
+                q = q.eq("academic_year_id", academic_year_id)
+            if search:
+                q = q.ilike("name", f"%{search}%")
+            if allowed_ids is not None:
+                q = q.in_("id", list(allowed_ids))
+            return q
+
+        count_resp = _filtered(supabase.table("students").select("id", count="exact")).execute()
         total = count_resp.count if count_resp.count is not None else len(count_resp.data)
 
-        # Data query — get students from the raw table (for full columns + filters)
         offset = (page - 1) * limit
-        query = supabase.table("students").select("*").eq("tenant_id", tenant_id).eq("is_deleted", False)
-        if class_id:
-            query = query.eq("class_id", class_id)
-        if section_id:
-            query = query.eq("section_id", section_id)
-        if academic_year_id:
-            query = query.eq("academic_year_id", academic_year_id)
-        if search:
-            query = query.ilike("name", f"%{search}%")
-        students_resp = query.order("id").range(offset, offset + limit - 1).execute()
+        students_resp = (
+            _filtered(supabase.table("students").select("*"))
+            .order("id").range(offset, offset + limit - 1).execute()
+        )
 
         if not students_resp.data:
-            return {
-                "data": [],
-                "page": page,
-                "limit": limit,
-                "total": total,
-                "total_pages": math.ceil(total / limit) if total > 0 else 1,
-            }
+            return {"data": [], "page": page, "limit": limit, "total": total,
+                    "total_pages": math.ceil(total / limit) if total > 0 else 1}
 
-        # Enrich with financial data from the view (tenant-scoped)
         student_ids = [s["id"] for s in students_resp.data]
+
+        # Financial enrichment (student_due_summary).
         fin_resp = (
             supabase.table("student_due_summary")
             .select("id, total_fee, total_paid, due, advance, last_payment_date")
-            .eq("tenant_id", tenant_id)
-            .in_("id", student_ids)
-            .execute()
+            .eq("tenant_id", tenant_id).in_("id", student_ids).execute()
         )
         fin_map = {row["id"]: row for row in fin_resp.data}
 
-        # Merge student data + financial data
+        # Section-name map (small per tenant).
+        sec_resp = supabase.table("sections").select("id, name").eq("tenant_id", tenant_id).execute()
+        sec_map = {row["id"]: row["name"] for row in sec_resp.data}
+
         enriched = []
         for s in students_resp.data:
             fin = fin_map.get(s["id"], {})
@@ -89,15 +109,11 @@ def list_students(
             s["due"] = fin.get("due", 0)
             s["advance"] = fin.get("advance", 0)
             s["last_payment_date"] = fin.get("last_payment_date")
+            s["section"] = sec_map.get(s.get("section_id"))
             enriched.append(s)
 
-        return {
-            "data": enriched,
-            "page": page,
-            "limit": limit,
-            "total": total,
-            "total_pages": math.ceil(total / limit) if total > 0 else 1,
-        }
+        return {"data": enriched, "page": page, "limit": limit, "total": total,
+                "total_pages": math.ceil(total / limit) if total > 0 else 1}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -115,6 +131,10 @@ def create_student(student: StudentCreate, tenant_id: str = Depends(get_tenant_i
             data["section_id"] = student.section_id
         if student.academic_year_id is not None:
             data["academic_year_id"] = student.academic_year_id
+        for _f in ("admission_date", "date_of_birth", "gender", "address", "guardian_id"):
+            _v = getattr(student, _f)
+            if _v is not None:
+                data[_f] = _v
 
         resp = supabase.table("students").insert(data).execute()
         if not resp.data:
@@ -160,6 +180,10 @@ def update_student(student_id: int, student: StudentUpdate, tenant_id: str = Dep
             data["section_id"] = student.section_id
         if student.academic_year_id is not None:
             data["academic_year_id"] = student.academic_year_id
+        for _f in ("admission_date", "date_of_birth", "gender", "address", "guardian_id"):
+            _v = getattr(student, _f)
+            if _v is not None:
+                data[_f] = _v
 
         if not data:
             raise HTTPException(status_code=400, detail="No data provided to update")
@@ -271,21 +295,28 @@ def get_student_payments(
     student_id: int,
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
+    from_date: Optional[str] = Query(default=None, alias="from"),
+    to_date: Optional[str] = Query(default=None, alias="to"),
+    method: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
     tenant_id: str = Depends(get_tenant_id),
 ):
-    """Payment history for a student (paginated)."""
+    """Payment history for a student — paginated, filterable by date range / method / status."""
     try:
         offset = (page - 1) * limit
-        resp = (
-            supabase.table("payments")
-            .select("*")
-            .eq("student_id", student_id)
-            .eq("tenant_id", tenant_id)
-            .eq("is_deleted", False)
-            .order("date", desc=True)
-            .range(offset, offset + limit - 1)
-            .execute()
+        query = (
+            supabase.table("payments").select("*")
+            .eq("student_id", student_id).eq("tenant_id", tenant_id).eq("is_deleted", False)
         )
+        if from_date:
+            query = query.gte("date", from_date)
+        if to_date:
+            query = query.lte("date", to_date)
+        if method:
+            query = query.eq("method", method)
+        if status:
+            query = query.eq("status", status)
+        resp = query.order("date", desc=True).range(offset, offset + limit - 1).execute()
         return resp.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

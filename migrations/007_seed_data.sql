@@ -259,6 +259,12 @@ BEGIN
     DELETE FROM students            WHERE tenant_id = v_tenant;
     DELETE FROM employees           WHERE tenant_id = v_tenant;
 
+    -- Reset this tenant's per-year sequences so a re-seed yields pristine demo
+    -- numbers: registrations restart at {year}-0001 and receipts self-heal to
+    -- PAY-{year}-0011 (just past the 10 hardcoded seed receipts). Harmless if
+    -- tenant_counters is empty.
+    DELETE FROM tenant_counters WHERE tenant_id = v_tenant;
+
     -- ── Opening cash balance ──────────────────────────────────────
     --   A real madrasa starts with reserves (donations / waqf / founder
     --   capital) before it pays any salaries. Without this, Cash would be

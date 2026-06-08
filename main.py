@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routes import auth, academic, students, employees, accounts
 from routes import fees, payments, salary, expenses, income
 from routes import reports, journal
-from routes import tenants, roles, users
+from routes import tenants, roles, users, guardians
 from routes import discounts, payroll, exams, attendance
 from routes import accounting_reports, notifications
 
@@ -43,6 +43,7 @@ app.include_router(users.router)
 # Academic & people
 app.include_router(academic.router)
 app.include_router(students.router)
+app.include_router(guardians.router)
 app.include_router(employees.router)
 
 # Accounting & reports
@@ -80,7 +81,7 @@ def read_root():
         "docs": "/docs",
         "modules": [
             "auth", "tenants", "roles", "users",
-            "academic", "students", "employees",
+            "academic", "students", "guardians", "employees",
             "accounts", "journal", "reports", "accounting_reports",
             "fees", "payments", "discounts",
             "salary", "payroll",

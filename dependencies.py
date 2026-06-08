@@ -108,3 +108,18 @@ def require_roles(*allowed: str):
             )
         return user
     return _checker
+
+
+# Roles allowed to perform financial writes (fees, payments, discounts, payroll).
+FINANCIAL_ROLES = ("owner", "admin", "accountant")
+
+
+def get_financial_tenant_id(
+    user: dict = Depends(require_roles(*FINANCIAL_ROLES)),
+) -> str:
+    """
+    Tenant id for financial WRITE endpoints. Unlike get_tenant_id, this REQUIRES
+    an authenticated owner/admin/accountant (no X-Tenant-ID header fallback), so
+    money-affecting actions can't be performed unauthenticated or as a viewer.
+    """
+    return user["tenant_id"]

@@ -7,7 +7,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database import supabase
-from dependencies import get_tenant_id
+from dependencies import get_tenant_id, get_financial_tenant_id
 from models.fee import (
     FeeTypeCreate, FeeTypeUpdate, FeeTypeResponse,
     FeeAssignCreate, FeeAssignResponse,
@@ -29,7 +29,7 @@ def list_fee_types(tenant_id: str = Depends(get_tenant_id)):
 
 
 @router.post("/fee-types", response_model=FeeTypeResponse, status_code=201)
-def create_fee_type(payload: FeeTypeCreate, tenant_id: str = Depends(get_tenant_id)):
+def create_fee_type(payload: FeeTypeCreate, tenant_id: str = Depends(get_financial_tenant_id)):
     """Create a new fee type."""
     try:
         data = payload.model_dump()
@@ -43,7 +43,7 @@ def create_fee_type(payload: FeeTypeCreate, tenant_id: str = Depends(get_tenant_
 
 
 @router.put("/fee-types/{fee_type_id}", response_model=FeeTypeResponse)
-def update_fee_type(fee_type_id: int, payload: FeeTypeUpdate, tenant_id: str = Depends(get_tenant_id)):
+def update_fee_type(fee_type_id: int, payload: FeeTypeUpdate, tenant_id: str = Depends(get_financial_tenant_id)):
     """Update a fee type."""
     try:
         data = {k: v for k, v in payload.model_dump().items() if v is not None}
@@ -60,7 +60,7 @@ def update_fee_type(fee_type_id: int, payload: FeeTypeUpdate, tenant_id: str = D
 
 
 @router.delete("/fee-types/{fee_type_id}")
-def delete_fee_type(fee_type_id: int, tenant_id: str = Depends(get_tenant_id)):
+def delete_fee_type(fee_type_id: int, tenant_id: str = Depends(get_financial_tenant_id)):
     """Soft-delete a fee type."""
     try:
         resp = (
@@ -80,7 +80,7 @@ def delete_fee_type(fee_type_id: int, tenant_id: str = Depends(get_tenant_id)):
 # ─── FEE ASSIGNMENT ─────────────────────────────────────────────────────────
 
 @router.post("/fees/assign", response_model=FeeAssignResponse, status_code=201)
-def assign_fee(payload: FeeAssignCreate, tenant_id: str = Depends(get_tenant_id)):
+def assign_fee(payload: FeeAssignCreate, tenant_id: str = Depends(get_financial_tenant_id)):
     """
     Assign a fee to a student for a specific month.
     Triggers trg_fee_assignment_journal → Dr Accounts Receivable / Cr Tuition Fees.
@@ -142,7 +142,7 @@ def list_fees(
 
 
 @router.delete("/fees/{fee_id}")
-def delete_fee(fee_id: int, tenant_id: str = Depends(get_tenant_id)):
+def delete_fee(fee_id: int, tenant_id: str = Depends(get_financial_tenant_id)):
     """Soft-delete a fee assignment."""
     try:
         resp = (

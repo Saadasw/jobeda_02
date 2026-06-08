@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database import supabase
-from dependencies import get_tenant_id
+from dependencies import get_tenant_id, get_financial_tenant_id
 from models.payment import (
     PaymentCreate, PaymentResponse,
     PaymentAllocationCreate, PaymentAllocationResponse,
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
 @router.post("", response_model=PaymentResponse, status_code=201)
-def create_payment(payload: PaymentCreate, tenant_id: str = Depends(get_tenant_id)):
+def create_payment(payload: PaymentCreate, tenant_id: str = Depends(get_financial_tenant_id)):
     """
     Record a student payment with auto-generated receipt number.
     """
@@ -84,7 +84,7 @@ def get_payment(payment_id: int, tenant_id: str = Depends(get_tenant_id)):
 
 
 @router.post("/{payment_id}/allocate")
-def allocate_payment(payment_id: int, tenant_id: str = Depends(get_tenant_id)):
+def allocate_payment(payment_id: int, tenant_id: str = Depends(get_financial_tenant_id)):
     """
     Auto-allocate a payment against the student's oldest unpaid fees.
     Triggers journal entries via payment_allocations insert trigger.
@@ -103,7 +103,7 @@ def allocate_payment(payment_id: int, tenant_id: str = Depends(get_tenant_id)):
 
 
 @router.post("/{payment_id}/finalize")
-def finalize_payment_endpoint(payment_id: int, tenant_id: str = Depends(get_tenant_id)):
+def finalize_payment_endpoint(payment_id: int, tenant_id: str = Depends(get_financial_tenant_id)):
     """
     Finalize a payment: unallocated remainder becomes Unearned Revenue.
     The DB function derives the tenant from the payment row itself.
@@ -123,7 +123,7 @@ def finalize_payment_endpoint(payment_id: int, tenant_id: str = Depends(get_tena
              tags=["Payment Allocations"])
 def create_manual_allocation(
     payload: PaymentAllocationCreate,
-    tenant_id: str = Depends(get_tenant_id),
+    tenant_id: str = Depends(get_financial_tenant_id),
 ):
     """
     Manually allocate a payment amount to a specific fee assignment.
