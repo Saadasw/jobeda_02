@@ -50,6 +50,7 @@ class StudentResponse(BaseModel):
     class_id: Optional[int] = None
     section_id: Optional[int] = None
     section: Optional[str] = None              # section name (enriched)
+    roll_no: Optional[int] = None             # current-enrollment roll (enriched)
     academic_year_id: Optional[int] = None
     admission_date: Optional[str] = None
     date_of_birth: Optional[str] = None

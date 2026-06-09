@@ -101,6 +101,14 @@ def list_students(
         sec_resp = supabase.table("sections").select("id, name").eq("tenant_id", tenant_id).execute()
         sec_map = {row["id"]: row["name"] for row in sec_resp.data}
 
+        # Current-enrollment roll map (roll_no lives on the enrollment, not the student row).
+        enr_resp = (
+            supabase.table("student_enrollments").select("student_id, roll_no")
+            .eq("tenant_id", tenant_id).eq("is_current", True)
+            .in_("student_id", student_ids).execute()
+        )
+        roll_map = {r["student_id"]: r["roll_no"] for r in enr_resp.data}
+
         enriched = []
         for s in students_resp.data:
             fin = fin_map.get(s["id"], {})
@@ -110,6 +118,7 @@ def list_students(
             s["advance"] = fin.get("advance", 0)
             s["last_payment_date"] = fin.get("last_payment_date")
             s["section"] = sec_map.get(s.get("section_id"))
+            s["roll_no"] = roll_map.get(s["id"])
             enriched.append(s)
 
         return {"data": enriched, "page": page, "limit": limit, "total": total,
@@ -158,7 +167,22 @@ def get_student(student_id: int, tenant_id: str = Depends(get_tenant_id)):
         )
         if not resp.data:
             raise HTTPException(status_code=404, detail="Student not found")
-        return resp.data[0]
+        student = resp.data[0]
+
+        # Enrich section name + current-enrollment roll (parallel to list_students).
+        if student.get("section_id"):
+            sec = (
+                supabase.table("sections").select("name")
+                .eq("id", student["section_id"]).eq("tenant_id", tenant_id).limit(1).execute()
+            )
+            student["section"] = sec.data[0]["name"] if sec.data else None
+        enr = (
+            supabase.table("student_enrollments").select("roll_no")
+            .eq("student_id", student_id).eq("tenant_id", tenant_id).eq("is_current", True)
+            .limit(1).execute()
+        )
+        student["roll_no"] = enr.data[0]["roll_no"] if enr.data else None
+        return student
     except HTTPException:
         raise
     except Exception as e:
