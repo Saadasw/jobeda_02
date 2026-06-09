@@ -10,6 +10,7 @@ from routes import fees, payments, salary, expenses, income
 from routes import reports, journal
 from routes import tenants, roles, users, guardians
 from routes import discounts, payroll, exams, attendance
+from routes import fee_groups, fee_structures
 from routes import accounting_reports, notifications
 
 app = FastAPI(
@@ -53,6 +54,8 @@ app.include_router(reports.router)
 app.include_router(accounting_reports.router)
 
 # Fees, payments & discounts
+app.include_router(fee_groups.router)
+app.include_router(fee_structures.router)
 app.include_router(fees.router)
 app.include_router(payments.router)
 app.include_router(discounts.router)
@@ -83,7 +86,7 @@ def read_root():
             "auth", "tenants", "roles", "users",
             "academic", "students", "guardians", "employees",
             "accounts", "journal", "reports", "accounting_reports",
-            "fees", "payments", "discounts",
+            "fee-groups", "fee-structures", "fees", "payments", "discounts",
             "salary", "payroll",
             "expenses", "income",
             "exams", "attendance",

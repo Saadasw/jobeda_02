@@ -7,13 +7,17 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database import supabase
-from dependencies import get_tenant_id, get_financial_tenant_id
+from dependencies import get_tenant_id, get_financial_tenant_id, require_roles
 from models.fee import (
     FeeTypeCreate, FeeTypeUpdate, FeeTypeResponse,
     FeeAssignCreate, FeeAssignResponse,
+    FeeGenerateRequest, FeeGenerateManualRequest, FeeGenerateResult,
 )
+from services.fee_generation import generate_from_structures, generate_manual
 
 router = APIRouter(tags=["Fees"])
+
+_FIN_ROLES = ("owner", "admin", "accountant")
 
 
 # ─── FEE TYPES ───────────────────────────────────────────────────────────────
@@ -155,5 +159,45 @@ def delete_fee(fee_id: int, tenant_id: str = Depends(get_financial_tenant_id)):
         return {"message": "Fee assignment archived", "fee_id": fee_id}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── BULK GENERATION ─────────────────────────────────────────────────────────
+
+@router.post("/fees/generate", response_model=FeeGenerateResult, tags=["Fee Generation"])
+def generate_fees(payload: FeeGenerateRequest, user: dict = Depends(require_roles(*_FIN_ROLES))):
+    """
+    Generate fees for every active student in scope from their (class, fee_group)
+    structure. Idempotent — skips any (student, fee_type, month) already billed.
+    Pass dry_run=true for a preview (counts only, no inserts).
+    """
+    try:
+        return generate_from_structures(
+            user["tenant_id"], payload.academic_year_id, payload.month,
+            class_id=payload.class_id, section_id=payload.section_id,
+            fee_type_ids=payload.fee_type_ids, created_by_id=user.get("id"),
+            dry_run=payload.dry_run,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/fees/generate-manual", response_model=FeeGenerateResult, tags=["Fee Generation"])
+def generate_fees_manual(payload: FeeGenerateManualRequest, user: dict = Depends(require_roles(*_FIN_ROLES))):
+    """
+    Flat one-off charge of a single fee type to every active student in scope
+    (ignores structures). Idempotent like /fees/generate.
+    """
+    try:
+        return generate_manual(
+            user["tenant_id"], payload.academic_year_id, payload.month,
+            fee_type_id=payload.fee_type_id, amount=payload.amount,
+            class_id=payload.class_id, section_id=payload.section_id,
+            due_day=payload.due_day, created_by_id=user.get("id"),
+            dry_run=payload.dry_run,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
