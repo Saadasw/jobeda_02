@@ -64,6 +64,7 @@ Drifted from the clean seed: test payments (Yusuf/Khadija/Ahmed), test guardians
 ---
 
 ## NEXT STEPS (priority order)
+0. **Fee generation (Phase 1+2 + fee groups)** — specced & decided, NOT yet built. See "Fee generation — decided design" below. Start at migration `039`.
 1. **Roll assignment** (deferred from the admission UI): `create_student` doesn't accept `roll_no`, so the Roll column currently always shows `—`. Build a per-section roll-assignment flow that sets `student_enrollments.roll_no` (unique per year+class+section) — likely a small endpoint (e.g. `PUT /students/{id}/enrollment` or a bulk "assign rolls" action) plus UI.
 2. **Contract-phase migration** (separate, careful — design before coding): flip readers off the legacy `students.class_id/section_id` onto `student_enrollments` joins — affects `student_due_summary`, `fee_detail_summary`, `generate_report_card` (still reads `students.class_id`!), `compute_class_positions`, attendance summaries. Then drop/retire the legacy columns. Fixes the latent bug where promoting a student rewrites their *historical* report cards.
 3. **Push the frontend repo** to GitHub (currently local-only).
@@ -71,6 +72,33 @@ Drifted from the clean seed: test payments (Yusuf/Khadija/Ahmed), test guardians
 
 ### Done recently
 - ✅ **Frontend consumption of the 038 fields** — admission form (bio + guardian picker), Reg-No/Section/Roll columns, status/has_dues filters, payment-history view. Frontend `de5d15b`, backend roll enrichment `3fef556`. Browser-verified end-to-end (admitted a test student, reg-no auto-assigned `2026-0009`, guardian linked; has-dues 8→6; payment date filter).
+
+---
+
+## Fee generation — decided design (NOT yet built)
+Replaces the one-at-a-time `POST /fees/assign` with templated bulk billing. Owner chose the **fee-groups** variant (different fees within a class).
+
+**Decisions (owner, this session):**
+1. Void handling → **deleted stays deleted**: generation skips any existing `(tenant, student, fee_type, month)`, voided or not. **No change** to `uq_fee_per_tenant_student_type_month` (it is NOT partial on is_deleted — confirmed migration 014).
+2. **Fee groups YES** — students in the same class pay different fees (boarding / day / free). Price lists are per **(year, class, fee_group)**.
+3. UI → new **Fees** nav section (Fee Groups · Fee Types · Fee Structures · Generate Fees).
+4. **`created_by_id`** on `fee_assignments` — stamp who ran the batch.
+
+**Schema — migration `039` (next number; applied through 038 + my 035–037):**
+- `fee_groups(id, tenant_id, name, description, is_deleted, created_at)`; unique name/tenant (partial WHERE not deleted).
+- `students.fee_group_id` (nullable FK) — student's *current* group (mirror pattern, like class_id; could move to enrollment later).
+- `fee_structures(id, tenant_id, academic_year_id, class_id, fee_group_id, name, is_deleted, created_by_id, created_at)`; partial-unique `(tenant, year, class, fee_group)` WHERE not deleted.
+- `fee_structure_items(id, tenant_id, fee_structure_id→CASCADE, fee_type_id, amount, frequency CHECK monthly/termly/annual/one_time, due_day 1..28, is_deleted)`; partial-unique `(structure, fee_type)`.
+- `fee_types.frequency` (CHECK monthly/termly/annual/one_time/adhoc; backfill from is_recurring; keep is_recurring for now).
+- `fee_assignments.created_by_id`.
+
+**Generation (group-aware):** `POST /fees/generate {academic_year_id, month, class_id|null, section_id|null, fee_type_ids|null (null=monthly items), dry_run}`. Scope active students via `student_enrollments` (year, class?, section?, status='active'). For each student → find structure for `(year, student.class_id, student.fee_group_id)` → make rows from its items (amount, account=fee_type.account_id, due_date=month@due_day). Result `{created, skipped (already billed), no_structure (no matching price list), students_in_scope, total_amount}`. Core helper `_bulk_assign(tenant, month, rows, dry_run)`: pre-fetch existing for month (any is_deleted) → insert delta in chunks of 200 (journal trigger fires per row) → unique constraint is the race backstop. `dry_run` powers the UI preview. Also a **manual one-off** mode (explicit fee_type+amount, flat charge to a class, ignores structures) for ad-hoc fees.
+
+**Endpoints:** fee-groups CRUD; `fee-structures` CRUD + `…/items` CRUD; `POST /fees/generate`. All writes financial-role (structures setup owner/admin). UI: Fees section (Groups CRUD, Structures editor = per-class accordion of per-group item tables, Generate modal w/ preview→confirm), + **Fee group select on admission form & student detail**.
+
+**Defaults (unless owner objects):** create Residential/Day/Free groups, tag the 9 existing students **Day**; fee_group on `students` (not enrollment) for now.
+
+**Build order:** 039 migration → backend (groups+structures CRUD + generate + smoke) → frontend Fees section → fee-group field on admission/detail → verify + commit per slice.
 
 ---
 
