@@ -4,7 +4,7 @@
 
 Multi-tenant madrasa/school ERP. Two sibling projects:
 - `jobeda/` (this repo) — **FastAPI + Supabase/PostgreSQL** backend. Git remote: `github.com/Saadasw/jobeda_02` (pushed).
-- `../jobeda-frontend/` — **React + TS + Vite + Mantine** SPA. Local git only (no remote yet).
+- `../jobeda-frontend/` — **React + TS + Vite + Mantine** SPA. Git remote: `github.com/Saadasw/jobeda_02_f` (pushed).
 
 ## Run
 ```

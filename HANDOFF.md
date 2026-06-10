@@ -1,6 +1,6 @@
 # HANDOFF — live status & next steps
 
-_Backend pushed through commit `84371da`. Frontend committed locally through `f762380` (no remote yet)._
+_Backend pushed through `84371da` (github.com/Saadasw/jobeda_02). Frontend pushed through `f762380` (github.com/Saadasw/jobeda_02_f)._
 
 We are building an **industry-grade React frontend** for the Jobeda ERP one careful, browser-verified feature at a time, and fixing backend data-correctness bugs as they surface. Read `CLAUDE.md` first for run commands / conventions / credentials.
 
@@ -32,7 +32,7 @@ Full multi-tenant ERP, migrations `001`–`038`, all route modules in `main.py` 
 
 ---
 
-## Frontend status (`../jobeda-frontend/`, local git only)
+## Frontend status (`../jobeda-frontend/` — remote `github.com/Saadasw/jobeda_02_f`)
 Commits: `20a4545` scaffold → `abb5743` auth → `d54bb1a` dashboard → `bfaf1f5` hide-pending-KPI → `5c1398b` students → `c856d65` fee-collection → `de5d15b` student-identity UI.
 
 Built & **browser-verified**:
@@ -66,8 +66,7 @@ Drifted from the clean seed: test payments (Yusuf/Khadija/Ahmed), test guardians
 ## NEXT STEPS (priority order)
 1. **Roll assignment** (deferred from the admission UI): `create_student` doesn't accept `roll_no`, so the Roll column currently always shows `—`. Build a per-section roll-assignment flow that sets `student_enrollments.roll_no` (unique per year+class+section) — likely a small endpoint (e.g. `PUT /students/{id}/enrollment` or a bulk "assign rolls" action) plus UI.
 2. **Contract-phase migration** (separate, careful — design before coding): flip readers off the legacy `students.class_id/section_id` onto `student_enrollments` joins — affects `student_due_summary`, `fee_detail_summary`, `generate_report_card` (still reads `students.class_id`!), `compute_class_positions`, attendance summaries. Then drop/retire the legacy columns. Fixes the latent bug where promoting a student rewrites their *historical* report cards.
-3. **Push the frontend repo** to GitHub (currently local-only).
-4. Minor: map `create_payment`'s raw DB error to a clean message.
+3. Minor: map `create_payment`'s raw DB error to a clean message.
 
 ### Done recently
 - ✅ **Frontend consumption of the 038 fields** — admission form (bio + guardian picker), Reg-No/Section/Roll columns, status/has_dues filters, payment-history view. Frontend `de5d15b`, backend roll enrichment `3fef556`. Browser-verified end-to-end (admitted a test student, reg-no auto-assigned `2026-0009`, guardian linked; has-dues 8→6; payment date filter).
