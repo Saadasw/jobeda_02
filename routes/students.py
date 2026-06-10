@@ -109,6 +109,10 @@ def list_students(
         )
         roll_map = {r["student_id"]: r["roll_no"] for r in enr_resp.data}
 
+        # Fee-group name map (include archived groups so a name still resolves).
+        grp_resp = supabase.table("fee_groups").select("id, name").eq("tenant_id", tenant_id).execute()
+        grp_map = {row["id"]: row["name"] for row in grp_resp.data}
+
         enriched = []
         for s in students_resp.data:
             fin = fin_map.get(s["id"], {})
@@ -119,6 +123,7 @@ def list_students(
             s["last_payment_date"] = fin.get("last_payment_date")
             s["section"] = sec_map.get(s.get("section_id"))
             s["roll_no"] = roll_map.get(s["id"])
+            s["fee_group"] = grp_map.get(s.get("fee_group_id"))
             enriched.append(s)
 
         return {"data": enriched, "page": page, "limit": limit, "total": total,
