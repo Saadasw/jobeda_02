@@ -22,7 +22,7 @@ Open http://localhost:5173 — demo login **owner@jobeda.com / Owner@123 / tenan
 ## Migrations (IMPORTANT)
 - The backend only has the Supabase REST client (publishable key) — it **cannot run DDL/arbitrary SQL**. New `migrations/NNN_*.sql` must be **applied by the user in the Supabase SQL editor**; then verify via a read-only probe (`supabase.table(...).select(...)`) or the API.
 - `007_seed_data.sql` = full post-migration seed; self-skips if run mid-sequence. Its wipe resets `tenant_counters` for pristine demo numbers.
-- Applied through **038** (confirmed this session).
+- Applied through **040** (student identity 038; fee groups/structures 039; created_by UUID fix 040). See `HANDOFF.md §8` for the migration log.
 
 ## Backend conventions
 - FastAPI routers, **no global prefix**, explicit paths, registered in `main.py`.

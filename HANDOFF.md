@@ -1,122 +1,162 @@
-# HANDOFF — live status & next steps
+# Jobeda Madrasa ERP — HANDOFF (project status)
 
-_Backend pushed through `84371da` (github.com/Saadasw/jobeda_02). Frontend pushed through `f762380` (github.com/Saadasw/jobeda_02_f)._
+> **Read `CLAUDE.md` first** (run commands, Supabase project id, conventions, git rules).
+> This file = the living picture: **what's built, what's not, and why.** Read it top-to-bottom to get oriented.
 
-We are building an **industry-grade React frontend** for the Jobeda ERP one careful, browser-verified feature at a time, and fixing backend data-correctness bugs as they surface. Read `CLAUDE.md` first for run commands / conventions / credentials.
+_Repos — backend: `github.com/Saadasw/jobeda_02` · frontend: `github.com/Saadasw/jobeda_02_f` (both pushed). Migrations applied through **040**. Backend ≈191 routes. Latest commits at time of writing: backend `b2ddc30`, frontend `57f04f1` — check `git log` for newer._
 
 ---
 
-## Backend status
-Full multi-tenant ERP, migrations `001`–`038`, all route modules in `main.py` (177 routes). Recent work this stretch:
+## 1. What this project is
+A multi-tenant madrasa/school ERP, built as two sibling repos:
+- **`jobeda/`** — FastAPI + Supabase/PostgreSQL backend (mature: full accounting, fees, payroll, exams, attendance).
+- **`../jobeda-frontend/`** — React + TS + Vite + Mantine SPA (newer: built feature-by-feature on the backend).
 
-- **Auth**: added httpOnly refresh-token cookie (rotation) on `/auth/login|refresh|logout`; refresh/logout read cookie **or** body. `COOKIE_SECURE` env flag (default false for local http).
-- **Student identity slice — migration `038`** (applied + backfilled + verified):
-  - `students` gained `registration_no` (permanent, per-tenant, format `YYYY-NNNN`, e.g. `2026-0001`), `admission_date`, `date_of_birth`, `gender` (male/female/other), `address`, `guardian_id`.
-  - new **`guardians`** table (name, phone, relation, email, occupation, address; siblings share one guardian).
-  - new **`student_enrollments`** table = per-year `class_id`/`section_id`/`roll_no`/`status`/`is_current` (UNIQUE per student+year; one current per student; roll unique per year+class+section).
-  - triggers: `trg_students_registration_no` (auto reg_no + admission_date on insert), `trg_students_default_enrollment` (mirror class/section into a current enrollment on insert). `generate_registration_no()` self-heals (GREATEST(counter+1, max+1)) like receipts.
-- **API exposes 038 (commit `a373525`)**:
-  - student responses include `registration_no` + `section` (name); create/update accept the bio + `guardian_id` fields.
-  - `GET /students` filters: `status` (current-enrollment), `has_dues`; list rows now carry the section **name**.
-  - `GET /students/{id}/payments` filters: `from`, `to`, `method`, `status`.
-  - **Guardians CRUD** (`/guardians`, `+ /guardians/{id}/students`); writes role-gated.
-  - **Financial writes role-gated** via `dependencies.get_financial_tenant_id` (owner/admin/accountant, JWT required, no header fallback): fee assign + fee-type C/U/D + payment create/allocate/finalize/manual-alloc. Verified: those endpoints return **401** without a token (an `X-Tenant-ID`-only request, which used to work, is now rejected).
-- **roll_no enrichment (commit `3fef556`)**: `list_students` and `get_student` map the current enrollment's `roll_no` onto each student (roll lives on `student_enrollments`, not the student row); `StudentResponse` gained `roll_no`. `get_student` also enriches the section name.
+Working style this project: build the frontend **one careful, browser-verified feature at a time**, and fix backend data-correctness bugs as they surface. Commit per slice.
 
-### Verify backend quickly
+## 2. How it fits together (mental model)
 ```
-./venv/Scripts/python.exe -c "import main; print(len(main.app.routes))"   # 177
-# probe 038 applied:
-./venv/Scripts/python.exe -c "from database import supabase as s; print(s.table('student_enrollments').select('id').limit(1).execute().data)"
+React SPA (:5173) --/api proxy--> FastAPI (:8000) --Supabase REST/PostgREST--> Postgres
 ```
+- **Auth:** custom `users` table (NOT Supabase auth). Login → JWT access token (~30 min) + httpOnly **refresh cookie** (rotated). SPA holds the access token in memory and does a single-flight refresh on 401.
+- **Multi-tenant:** every table has `tenant_id`; every query filters by it. Active tenant = `f69c39b1-19ef-4a31-8658-e96d0140517c`.
+- **Accounting is automatic:** DB triggers post double-entry journals on fee/payment/discount inserts (look up GL accounts by name/id). So creating a fee or payment moves AR/income/cash and the dashboard. Generated columns are read-only.
+- **Migrations:** plain SQL in `migrations/NNN_*.sql`, **applied by the USER in the Supabase SQL editor** — the backend's publishable key can run table reads/writes but **not DDL**. After the user applies one, verify with a read probe.
+
+## 3. Core domain concepts (clears up common confusion)
+- **User ≠ Employee.** A *user* is a login account (email+password, one tenant, one role). An *employee* is a staff/payroll record with no login. The same words ("teacher", "admin") appear in both tables — different things. Demo login `owner@jobeda.com` is a user; the seeded teachers/admin are employees.
+- **Roles:** `owner, admin, accountant, teacher, viewer` (`roles` table, migration 018). One owner per tenant.
+- **Student identity:** `registration_no` (permanent, per-tenant `YYYY-NNNN`) **≠** `roll_no` (per year/class/section, reassigned). `student_enrollments` is the **source of truth** for per-year class/section/roll/status. Legacy `students.class_id/section_id` are still kept & mirrored into enrollments via trigger → this is the **EXPAND phase** (contract phase pending, see backlog).
+- **Guardian:** own table; siblings share one `guardian_id`.
+- **Fee model (the chain):** `fee_types` (catalog: Tuition/Hostel/Exam…) → `fee_groups` (Residential/Day/Free; each student is in one) → `fee_structures` (a price list per **year × class × group**) → `fee_structure_items` (fee_type + amount + frequency + due_day) → **fee generation** materializes `fee_assignments` (the actual dues) → **payments** allocate against them.
 
 ---
 
-## Frontend status (`../jobeda-frontend/` — remote `github.com/Saadasw/jobeda_02_f`)
-Commits: `20a4545` scaffold → `abb5743` auth → `d54bb1a` dashboard → `bfaf1f5` hide-pending-KPI → `5c1398b` students → `c856d65` fee-collection → `de5d15b` student-identity UI.
+## 4. ✅ WHAT'S BUILT (done & working)
 
-Built & **browser-verified**:
-- **Auth**: login / refresh / logout, in-memory access token + single-flight 401 refresh, route guards (`ProtectedRoute`, `RoleRoute`), error normalizer (422 field errors vs `{detail}`), Mantine app shell.
-- **Owner dashboard**: KPI cards (`/reports/dashboard`) + overdue-aging bars (`/late-fees/aging`). PENDING PAYMENTS card is intentionally hidden.
-- **Students list**: Reg-No / Section / Roll / **Group** columns; Class + dependent-Section + Status + Has-dues filters; searchable + paginated.
-- **Admission** (`AddStudentModal` + `GuardianPicker`, owner/admin): name, class→section, academic year (defaults current), admission date (today), DOB, gender, address, guardian (pick existing or create inline). Creates guardian→student, reg-no auto-assigned by the DB, navigates to the new detail.
-- **Student detail**: identity (reg-no · class · section · roll) + bio + guardian (name · phone) + inline fee-group reassign + **Edit** modal (`EditStudentModal` — name/admission/DOB/gender/address/fee-group/guardian; class/section excluded, they're enrollment-managed); discount-aware fee table; **payment history** (`StudentPaymentsTable`) with date-range / method / status filters.
-- **Fee collection**: Take-Payment modal (create → auto-allocate → receipt), role-gated, partial-failure safe, invalidates dashboard/student/history queries. Receipt persists after success.
-- Feature apis: `features/academic/api.ts` (classes/sections/years), `features/guardians/api.ts` (list/create/get).
+### Backend (migrations 001–040; FastAPI)
+- **Auth/sessions:** register (founding owner), login, refresh (rotating httpOnly cookie), logout, `/auth/me`, change-password, password-reset request/confirm, account lockout. `COOKIE_SECURE` env flag (false for local http).
+- **Users & invitations API** (owner/admin): list/get/create/update/deactivate users; create/list/revoke invitations + `/auth/accept-invitation`. **(API only — no UI yet.)** Invite tokens are returned in the response (no email transport yet).
+- **Students:** CRUD + soft delete; identity fields (038); list enriched with section **name**, **roll_no**, **fee_group name**; filters class/section/status/has_dues/search; sub-endpoints summary/fees/payments(+date/method/status filters)/ledger.
+- **Guardians:** CRUD + `/guardians/{id}/students`.
+- **Academic:** classes / sections / academic-years CRUD.
+- **Fees:** fee-types CRUD; assign; **fee_groups** CRUD; **fee_structures**(+items) CRUD; **group-aware generation** `POST /fees/generate` (dry-run preview, idempotent skip, `no_structure` count) + `/fees/generate-manual`.
+- **Payments:** create → auto-allocate → finalize; manual allocation; receipts (`generate_receipt_no`, self-healing).
+- **Money modules:** salary, payroll, expenses, income; accounts, journal, accounting_reports; reports (dashboard summary, fee-details, late-fee aging); discounts/waivers (027); due-dates + late fees (028).
+- **Plumbing:** double-entry journal triggers; `tenant_counters` (per-tenant/year sequences for receipts + registrations).
 
-Stack: React 18 + TS strict, Vite, Mantine 7, TanStack Query, React Router 6, Zustand, RHF + Zod, axios. `@/`→`src`. Dev proxy `/api`→:8000. Typed client: `npm run gen:api` (from backend `/openapi.json`).
+### Frontend (React SPA; remote `jobeda_02_f`)
+Commits: `20a4545` scaffold → auth → dashboard → students → fee-collection → student-identity UI → fees UI → group column → student edit (`57f04f1`).
+- **Auth:** login, guards (`ProtectedRoute`/`RoleRoute`), in-memory token + single-flight 401 refresh, error normalizer, Mantine app shell with role-gated nav.
+- **Owner dashboard:** KPI cards + overdue-aging bars (PENDING-PAYMENTS card intentionally hidden).
+- **Students:** list (Reg-No/Section/Roll/**Group** columns; Class+Section+Status+Has-dues filters; search+paginate); **admission** modal (bio + guardian picker, owner/admin); **detail** (identity+bio+guardian, inline fee-group reassign, **Edit** modal, discount-aware fee table, **payment history** with filters).
+- **Fees section** (owner/admin/accountant): Fee Groups CRUD, Fee Structures editor (per class → per-group price lists), **Generate Fees** modal (From-structures / Manual, preview→confirm).
+- **Take Payment** modal (create→allocate→receipt, partial-failure safe, query invalidation).
+- Shared: `formatMoney`, date helpers, `AsyncBoundary`, `StatCard`; feature apis for academic/guardians/fees.
 
----
-
-## Data-correctness fixes (all found this project, live-verified)
-1. **Cash double-count** (`035`): payment-allocation trigger was debiting Cash a 2nd time → changed to `Dr Unearned Revenue / Cr Accounts Receivable` + idempotent backfill. Cash went −37k → correct.
-2. **Opening balance**: seed now posts `Dr Cash / Cr Opening Balance` 200,000 so the demo isn't cash-negative. Cash → +130k.
-3. **Dashboard `total_due` ignored discounts** (`036`): now `Σgross − Σdiscounts − Σallocations` → 18,000→17,500, matching the students page.
-4. **Receipt collision** (`037`): `generate_receipt_no` self-heals past directly-inserted receipts (seed wrote `PAY-2026-0001..0010` without advancing the counter).
-5. **auto_allocate used GROSS not NET due** → over-allocated for discounted students. Rewrote `services/allocation.py` to read `fee_detail_summary.due` (net).
-6. **Receipt-view wiped on re-render**: `TakePaymentModal` reset effect keyed on `due`; changed to reset only on open.
-
----
-
-## Demo data state
-Drifted from the clean seed: test payments (Yusuf/Khadija/Ahmed), test guardians ("Abdul Karim", "Rafiqul Islam"), and a test student admitted via the UI ("Bilal Ahmed", reg `2026-0009`, Hifz-1/A). The `classes` table also has junk rows from Swagger "try it out" testing (names `string` and `sf69c39b1-…`) that appear in the class dropdown — cosmetic only. **To reset to pristine**: re-run `migrations/007_seed_data.sql` in the Supabase SQL editor — its wipe clears these and resets `tenant_counters`, so registrations restart at `2026-0001` and the next receipt is `PAY-2026-0011`.
+Stack: React 18 + TS strict · Vite · Mantine 7 · TanStack Query · React Router 6 · Zustand · RHF+Zod · axios. `@/`→`src`. Dev proxy `/api`→:8000. Regenerate types: `npm run gen:api`.
 
 ---
 
-## NEXT STEPS (priority order)
-1. **Roll assignment** (deferred from the admission UI): `create_student` doesn't accept `roll_no`, so the Roll column currently always shows `—`. Build a per-section roll-assignment flow that sets `student_enrollments.roll_no` (unique per year+class+section) — likely a small endpoint (e.g. `PUT /students/{id}/enrollment` or a bulk "assign rolls" action) plus UI.
-2. **Contract-phase migration** (separate, careful — design before coding): flip readers off the legacy `students.class_id/section_id` onto `student_enrollments` joins — affects `student_due_summary`, `fee_detail_summary`, `generate_report_card` (still reads `students.class_id`!), `compute_class_positions`, attendance summaries. Then drop/retire the legacy columns. Fixes the latent bug where promoting a student rewrites their *historical* report cards.
-3. Minor: map `create_payment`'s raw DB error to a clean message.
+## 5. 🚧 WHAT'S NOT DONE (backlog)
+Priority 🔴 high / 🟡 medium / 🟢 nice-to-have · size S/M/L.
 
-### Done recently
-- ✅ **Frontend consumption of the 038 fields** — admission form (bio + guardian picker), Reg-No/Section/Roll columns, status/has_dues filters, payment-history view. Frontend `de5d15b`, backend roll enrichment `3fef556`. Browser-verified end-to-end (admitted a test student, reg-no auto-assigned `2026-0009`, guardian linked; has-dues 8→6; payment date filter).
+**Security / hardening**
+- 🔴 S — **Role-gate the open writes.** Student create/edit/delete, academic CRUD, salary/payroll/expense/income, exams/attendance are **not role-gated** (any logged-in user can do them). Make teacher/viewer truly read-only. (Only fees/payments/discounts/guardians/users writes are gated today — see §6.)
+- 🟡 M — Optional `role_permissions` table (data-driven) instead of scattered `require_roles`.
+- 🟢 S — Tighten the `X-Tenant-ID` header fallback (lets non-financial endpoints be hit without a JWT).
 
----
+**Missing UI (backend exists, no screen)**
+- 🟡 M — **Users management** (list/invite/change-role/deactivate) — currently API-only.
+- 🟡 M — **Fee Types** screen (seeded; editable only via API).
+- 🟡 L — Expenses, Income, Salary/Payroll, Accounts/Journal, Accounting reports.
+- 🟢 M — Employees, Exams, Attendance, Discounts UI, Notifications.
 
-## Fee generation — BUILT (backend `be7c87b`+`84371da`, frontend `f762380`)
-Templated bulk billing with fee groups. Migrations **039 + 040** applied. Browser-verified end-to-end: Hifz-1 Day price list (Tuition 2,000 + Hostel 1,500/mo); Generate preview "6 fees / ৳10,500" → generated; fees show on student detail; reassign Day→Residential persists.
+**Students / enrollment**
+- 🔴 M — **Roll assignment** (per section). `create_student` doesn't take a roll → Roll column always "—". Needs an endpoint (e.g. `PUT /students/{id}/enrollment` or bulk assign) + UI.
+- 🔴 M — **Class transfer / promotion flow** that updates the per-year **enrollment** (the Edit modal omits class for exactly this reason).
+- 🟡 L — **Contract-phase migration:** flip readers (`student_due_summary`, `fee_detail_summary`, `generate_report_card` — still reads `students.class_id`! — `compute_class_positions`, attendance summaries) onto `student_enrollments`; then retire legacy `students.class_id/section_id`. **Fixes a latent bug:** promoting a student currently rewrites their *historical* report cards. (Could also move `fee_group_id` to the enrollment for per-year groups.)
 
-**What shipped:** fee_groups + fee_structures(+items) tables; group-aware `POST /fees/generate` (dry-run preview, idempotent skip, `no_structure` count) + `/fees/generate-manual`; fee-groups & fee-structures CRUD (finance-gated); Fees UI (nav section, structure editor per class×group, Generate modal preview→confirm, groups CRUD); fee-group select on admission + inline reassign on student detail.
+**Fee system follow-ups**
+- 🟡 S — Inline **edit of a structure item's amount** (today: remove + re-add).
+- 🟡 S — **Per-item selection** in Generate (today bills all `monthly` items).
+- 🟢 M — **Termly / one-time billing** (needs a "terms" concept or manual month pick).
+- 🟢 M — Auto-generate one-time fees **at admission** + a **scheduled monthly auto-run**.
 
-**Deferred (follow-ups):** inline edit of a structure item's amount (currently remove + re-add); per-item selection in the generate run (currently bills all `monthly` items); termly/one-time billing needs a terms concept or manual month pick; auto-generate one-time fees at admission; a scheduled monthly auto-run; **007 seed wipe doesn't clear the new fee_* tables** (re-seeding leaves structures/groups — add them to the wipe later).
+**Data / infra / ops**
+- 🟡 S — **`007` seed wipe doesn't clear `fee_groups`/`fee_structures`/`fee_structure_items`** → re-seeding strands them (caused the duplicate-"Day" tangle). Add them to the wipe.
+- 🟡 M — **Email transport** for invitations + password reset (tokens currently returned in API response).
+- 🟡 M — **Deployment** (nothing hosted) + prod config (`VITE_API_BASE_URL`, `COOKIE_SECURE=true`).
+- 🟢 M — **Automated tests** (only manual smoke tests today).
+- 🟢 S — Standardize money serialization (string vs number); frontend code-splitting (bundle >500 kB).
 
-**Demo-data note:** the demo was re-seeded (student ids ~10–18, regs `2026-0001..0008`). Fee groups consolidated to **Residential / Free / Day** — a duplicate "Day" from UI testing (renamed "Day1") was archived and the original Day un-archived via a direct table update (the publishable-key client CAN do table writes, just not DDL). Hifz-1 **Day** price list = Tuition ৳2,000 + Hostel ৳1,500; Jun + Aug 2026 fees were generated for the 3 Hifz-1 Day students. 7 students on Day, **Ahmed on Residential** (no Hifz-1 Residential price list yet → he shows `no_structure` on a Hifz-1 generate until one is added or he's moved to Day). Khadija has gender/address set from an Edit-modal test. **Reminder:** the `007` wipe still doesn't clear `fee_groups`/`fee_structures`/`fee_structure_items` — re-seeding leaves these behind (the source of the earlier duplicate-Day tangle).
+**Small fixes / demo cleanup**
+- 🟢 S — `create_payment` raw DB error → clean message.
+- 🟢 S — Junk `classes` rows (`string`, `sf69c39b1…` from Swagger testing) — cosmetic; cleared by re-seed.
+- 🟢 S — Demo: add a **Hifz-1 Residential** price list (so Ahmed bills) or move Ahmed back to Day.
 
-### Original decided design (for reference)
-Owner chose the **fee-groups** variant (different fees within a class).
-
-**Decisions (owner, this session):**
-1. Void handling → **deleted stays deleted**: generation skips any existing `(tenant, student, fee_type, month)`, voided or not. **No change** to `uq_fee_per_tenant_student_type_month` (it is NOT partial on is_deleted — confirmed migration 014).
-2. **Fee groups YES** — students in the same class pay different fees (boarding / day / free). Price lists are per **(year, class, fee_group)**.
-3. UI → new **Fees** nav section (Fee Groups · Fee Types · Fee Structures · Generate Fees).
-4. **`created_by_id`** on `fee_assignments` — stamp who ran the batch.
-
-**Schema — migration `039` (next number; applied through 038 + my 035–037):**
-- `fee_groups(id, tenant_id, name, description, is_deleted, created_at)`; unique name/tenant (partial WHERE not deleted).
-- `students.fee_group_id` (nullable FK) — student's *current* group (mirror pattern, like class_id; could move to enrollment later).
-- `fee_structures(id, tenant_id, academic_year_id, class_id, fee_group_id, name, is_deleted, created_by_id, created_at)`; partial-unique `(tenant, year, class, fee_group)` WHERE not deleted.
-- `fee_structure_items(id, tenant_id, fee_structure_id→CASCADE, fee_type_id, amount, frequency CHECK monthly/termly/annual/one_time, due_day 1..28, is_deleted)`; partial-unique `(structure, fee_type)`.
-- `fee_types.frequency` (CHECK monthly/termly/annual/one_time/adhoc; backfill from is_recurring; keep is_recurring for now).
-- `fee_assignments.created_by_id`.
-
-**Generation (group-aware):** `POST /fees/generate {academic_year_id, month, class_id|null, section_id|null, fee_type_ids|null (null=monthly items), dry_run}`. Scope active students via `student_enrollments` (year, class?, section?, status='active'). For each student → find structure for `(year, student.class_id, student.fee_group_id)` → make rows from its items (amount, account=fee_type.account_id, due_date=month@due_day). Result `{created, skipped (already billed), no_structure (no matching price list), students_in_scope, total_amount}`. Core helper `_bulk_assign(tenant, month, rows, dry_run)`: pre-fetch existing for month (any is_deleted) → insert delta in chunks of 200 (journal trigger fires per row) → unique constraint is the race backstop. `dry_run` powers the UI preview. Also a **manual one-off** mode (explicit fee_type+amount, flat charge to a class, ignores structures) for ad-hoc fees.
-
-**Endpoints:** fee-groups CRUD; `fee-structures` CRUD + `…/items` CRUD; `POST /fees/generate`. All writes financial-role (structures setup owner/admin). UI: Fees section (Groups CRUD, Structures editor = per-class accordion of per-group item tables, Generate modal w/ preview→confirm), + **Fee group select on admission form & student detail**.
-
-**Defaults (unless owner objects):** create Residential/Day/Free groups, tag the 9 existing students **Day**; fee_group on `students` (not enrollment) for now.
-
-**Build order:** 039 migration → backend (groups+structures CRUD + generate + smoke) → frontend Fees section → fee-group field on admission/detail → verify + commit per slice.
+**Top 3 to do next:** ① role-gate the open writes · ② contract-phase migration · ③ roll assignment + class transfer.
 
 ---
 
-## Design decisions locked (from the admissions discussion)
-- `registration_no` (permanent, per-tenant, `YYYY-NNNN`) **≠** `roll_no` (per year/class/section, reassigned yearly).
-- `student_enrollments` is the source of truth for per-year class/section/roll/status. **Currently EXPAND phase**: legacy `students.class_id/section_id` kept and mirrored into enrollments via trigger; contract phase (step 2 above) still pending.
-- `guardians` is its own table; siblings share `guardian_id`.
-- Financial writes require owner/admin/accountant.
+## 6. Roles & permissions — ACTUAL enforcement
+No permissions table; roles are enforced inline per endpoint. Today:
 
-## Gotchas learned (don't relearn the hard way)
-- **Migrations**: the user applies them in the Supabase SQL editor (I can't run DDL). A `relation "tenants" does not exist` error = SQL editor pointed at the wrong/empty project (`vaiswiwkxcpdwkbzuoax`), not `lltdojrxjdnwbwowqptb`.
-- **Browser/preview tooling** (Claude Preview MCP) gets flaky after HMR churn — a Mantine modal can render empty. Restart the Vite dev server fresh before browser E2E.
-- **Money serialization** is inconsistent (string vs number) — always go through `formatMoney`/`Number`.
-- **Context**: browser screenshots are heavy; this kind of session fills the window fast. Compact at clean commit points.
+| Capability | owner | admin | accountant | teacher | viewer |
+|---|:--:|:--:|:--:|:--:|:--:|
+| Users + invitations | ✓ | ✓ | — | — | — |
+| Fees (assign/types/generate, groups, structures) | ✓ | ✓ | ✓ | — | — |
+| Payments / discounts / guardians writes | ✓ | ✓ | ✓ | — | — |
+| **Students, academic, salary, expenses, income, exams, attendance writes** | ✓ | ✓ | ✓ | ✓ | ✓ |  ← ⚠️ **NOT gated** (any auth) |
+| All reads | open to any authenticated user |
+
+`get_financial_tenant_id` (owner/admin/accountant, JWT required) gates the fee/payment writes; `require_roles("owner","admin")` gates users. **Gap:** the descriptions call teacher/viewer "read-only," but the API doesn't enforce that on the non-fee write endpoints yet (top backlog item).
+
+---
+
+## 7. Data-correctness fixes (found & fixed this project, live-verified)
+1. **Cash double-count** (`035`): allocation trigger double-debited Cash → `Dr Unearned / Cr A/R` + backfill.
+2. **Opening balance** (seed): posts `Dr Cash / Cr Opening Balance` 200,000 so the demo isn't cash-negative.
+3. **Dashboard `total_due` ignored discounts** (`036`): now `Σgross − Σdiscounts − Σallocations`.
+4. **Receipt collision** (`037`): `generate_receipt_no` self-heals past directly-inserted receipts.
+5. **auto_allocate used GROSS not NET due** → rewrote `services/allocation.py` to use `fee_detail_summary.due`.
+6. **Receipt-view wiped on re-render**: `TakePaymentModal` reset effect now keyed on open only.
+
+---
+
+## 8. Migrations
+Applied **through 040**. Workflow: I write `migrations/NNN_*.sql` → **user runs it in the Supabase SQL editor** → I verify via probe. Key recent ones:
+- `038` student identity, guardians, `student_enrollments` (+ reg-no/enrollment triggers).
+- `039` fee groups, fee structures(+items), `students.fee_group_id`, `fee_types.frequency`, `fee_assignments.created_by_id`; seeds Residential/Day/Free + tags students Day.
+- `040` fix `created_by_id` to **UUID** (users.id is UUID — `039` wrongly made it INT).
+
+**Fee generation schema/endpoints (reference):** `fee_groups`; `fee_structures(year,class,fee_group)`; `fee_structure_items(fee_type,amount,frequency,due_day)`. `POST /fees/generate {academic_year_id, month, class_id?, section_id?, fee_type_ids?, dry_run}` → scopes active students via `student_enrollments`, resolves each to their `(class, fee_group)` structure, inserts `fee_assignments` for the chosen items (default: monthly), **skipping already-billed** (the `uq_fee_per_tenant_student_type_month` UNIQUE — NOT partial on is_deleted — is the backstop). Decision: **deleted-fee stays deleted** (generation skips it).
+
+---
+
+## 9. Demo data state (current)
+- Re-seeded at some point → student ids ~10–18, regs `2026-0001..0008`.
+- Fee groups consolidated to **Residential / Free / Day** (an accidental duplicate "Day"/"Day1" was archived; original Day restored via a direct table update — the publishable key CAN do table writes, just not DDL).
+- Hifz-1 **Day** price list = Tuition ৳2,000 + Hostel ৳1,500; June + August 2026 fees generated for the 3 Hifz-1 Day students.
+- 7 students on Day; **Ahmed Hossain on Residential** (no Hifz-1 Residential price list yet → `no_structure` on a Hifz-1 generate until one is added or he's moved back to Day). Khadija has gender/address from an Edit test.
+- **Reset to pristine:** re-run `migrations/007_seed_data.sql` (resets `tenant_counters`) — but note it does **not** clear the `fee_*` tables (backlog item).
+
+---
+
+## 10. Gotchas (don't relearn the hard way)
+- **Wrong Supabase project:** `relation "tenants" does not exist` = SQL editor on the empty `vaiswiwkxcpdwkbzuoax` instead of the active `lltdojrxjdnwbwowqptb`.
+- **Preview tooling flaky after HMR churn:** Mantine modals/routes can render stale. Restart the Vite dev server (or `preview_stop`+`preview_start`) fresh before browser E2E; reload to bust React Query's cached rows after a backend shape change.
+- **`users.id` is a UUID** (not int) — any `created_by`/FK column referencing it must be UUID.
+- **Money serialization** inconsistent (string vs number) — always go through `formatMoney`/`Number`.
+- **Never commit** `.env` / `.env.example` (real Supabase keys) / `.claude/` / `venv/`.
+- **Context fills fast** (browser screenshots are heavy) — compact at clean commit points.
+
+## 11. Quick reference
+```
+# backend
+cd jobeda && ./venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+./venv/Scripts/python.exe -c "import main; print(len(main.app.routes))"   # ~191
+# frontend
+cd jobeda-frontend && npm run dev        # http://localhost:5173
+# demo login: owner@jobeda.com / Owner@123 / tenant slug: jobeda
+```
