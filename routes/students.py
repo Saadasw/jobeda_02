@@ -140,7 +140,7 @@ def create_student(student: StudentCreate, tenant_id: str = Depends(get_tenant_i
             data["section_id"] = student.section_id
         if student.academic_year_id is not None:
             data["academic_year_id"] = student.academic_year_id
-        for _f in ("admission_date", "date_of_birth", "gender", "address", "guardian_id"):
+        for _f in ("admission_date", "date_of_birth", "gender", "address", "guardian_id", "fee_group_id"):
             _v = getattr(student, _f)
             if _v is not None:
                 data[_f] = _v
@@ -204,7 +204,7 @@ def update_student(student_id: int, student: StudentUpdate, tenant_id: str = Dep
             data["section_id"] = student.section_id
         if student.academic_year_id is not None:
             data["academic_year_id"] = student.academic_year_id
-        for _f in ("admission_date", "date_of_birth", "gender", "address", "guardian_id"):
+        for _f in ("admission_date", "date_of_birth", "gender", "address", "guardian_id", "fee_group_id"):
             _v = getattr(student, _f)
             if _v is not None:
                 data[_f] = _v

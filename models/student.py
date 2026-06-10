@@ -23,6 +23,7 @@ class StudentCreate(BaseModel):
     gender: Optional[Gender] = None
     address: Optional[str] = None
     guardian_id: Optional[int] = None
+    fee_group_id: Optional[int] = None
 
     model_config = {"populate_by_name": True}
 
@@ -38,6 +39,7 @@ class StudentUpdate(BaseModel):
     gender: Optional[Gender] = None
     address: Optional[str] = None
     guardian_id: Optional[int] = None
+    fee_group_id: Optional[int] = None
 
     model_config = {"populate_by_name": True}
 
@@ -57,6 +59,7 @@ class StudentResponse(BaseModel):
     gender: Optional[str] = None
     address: Optional[str] = None
     guardian_id: Optional[int] = None
+    fee_group_id: Optional[int] = None
     is_deleted: Optional[bool] = False
     created_at: Optional[str] = None
 
