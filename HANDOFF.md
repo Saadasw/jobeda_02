@@ -1,6 +1,6 @@
 # HANDOFF — live status & next steps
 
-_Backend pushed through commit `3fef556`. Frontend committed locally through `de5d15b` (no remote yet)._
+_Backend pushed through commit `84371da`. Frontend committed locally through `f762380` (no remote yet)._
 
 We are building an **industry-grade React frontend** for the Jobeda ERP one careful, browser-verified feature at a time, and fixing backend data-correctness bugs as they surface. Read `CLAUDE.md` first for run commands / conventions / credentials.
 
@@ -64,7 +64,6 @@ Drifted from the clean seed: test payments (Yusuf/Khadija/Ahmed), test guardians
 ---
 
 ## NEXT STEPS (priority order)
-0. **Fee generation (Phase 1+2 + fee groups)** — specced & decided, NOT yet built. See "Fee generation — decided design" below. Start at migration `039`.
 1. **Roll assignment** (deferred from the admission UI): `create_student` doesn't accept `roll_no`, so the Roll column currently always shows `—`. Build a per-section roll-assignment flow that sets `student_enrollments.roll_no` (unique per year+class+section) — likely a small endpoint (e.g. `PUT /students/{id}/enrollment` or a bulk "assign rolls" action) plus UI.
 2. **Contract-phase migration** (separate, careful — design before coding): flip readers off the legacy `students.class_id/section_id` onto `student_enrollments` joins — affects `student_due_summary`, `fee_detail_summary`, `generate_report_card` (still reads `students.class_id`!), `compute_class_positions`, attendance summaries. Then drop/retire the legacy columns. Fixes the latent bug where promoting a student rewrites their *historical* report cards.
 3. **Push the frontend repo** to GitHub (currently local-only).
@@ -75,8 +74,17 @@ Drifted from the clean seed: test payments (Yusuf/Khadija/Ahmed), test guardians
 
 ---
 
-## Fee generation — decided design (NOT yet built)
-Replaces the one-at-a-time `POST /fees/assign` with templated bulk billing. Owner chose the **fee-groups** variant (different fees within a class).
+## Fee generation — BUILT (backend `be7c87b`+`84371da`, frontend `f762380`)
+Templated bulk billing with fee groups. Migrations **039 + 040** applied. Browser-verified end-to-end: Hifz-1 Day price list (Tuition 2,000 + Hostel 1,500/mo); Generate preview "6 fees / ৳10,500" → generated; fees show on student detail; reassign Day→Residential persists.
+
+**What shipped:** fee_groups + fee_structures(+items) tables; group-aware `POST /fees/generate` (dry-run preview, idempotent skip, `no_structure` count) + `/fees/generate-manual`; fee-groups & fee-structures CRUD (finance-gated); Fees UI (nav section, structure editor per class×group, Generate modal preview→confirm, groups CRUD); fee-group select on admission + inline reassign on student detail.
+
+**Deferred (follow-ups):** inline edit of a structure item's amount (currently remove + re-add); per-item selection in the generate run (currently bills all `monthly` items); termly/one-time billing needs a terms concept or manual month pick; auto-generate one-time fees at admission; a scheduled monthly auto-run; **007 seed wipe doesn't clear the new fee_* tables** (re-seeding leaves structures/groups — add them to the wipe later).
+
+**Demo-data note:** a Hifz-1 Day structure exists; June + August 2026 fees were generated for the 3 Hifz-1 Day students; student #1 (Ahmed) was reassigned to **Residential** during testing (which has no Hifz-1 price list, so he'd show as `no_structure` on a Hifz-1 generate until a Residential structure is added or he's moved back to Day).
+
+### Original decided design (for reference)
+Owner chose the **fee-groups** variant (different fees within a class).
 
 **Decisions (owner, this session):**
 1. Void handling → **deleted stays deleted**: generation skips any existing `(tenant, student, fee_type, month)`, voided or not. **No change** to `uq_fee_per_tenant_student_type_month` (it is NOT partial on is_deleted — confirmed migration 014).
