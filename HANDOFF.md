@@ -38,9 +38,9 @@ Commits: `20a4545` scaffold → `abb5743` auth → `d54bb1a` dashboard → `bfaf
 Built & **browser-verified**:
 - **Auth**: login / refresh / logout, in-memory access token + single-flight 401 refresh, route guards (`ProtectedRoute`, `RoleRoute`), error normalizer (422 field errors vs `{detail}`), Mantine app shell.
 - **Owner dashboard**: KPI cards (`/reports/dashboard`) + overdue-aging bars (`/late-fees/aging`). PENDING PAYMENTS card is intentionally hidden.
-- **Students list**: Reg-No / Section / Roll columns; Class + dependent-Section + Status + Has-dues filters; searchable + paginated.
+- **Students list**: Reg-No / Section / Roll / **Group** columns; Class + dependent-Section + Status + Has-dues filters; searchable + paginated.
 - **Admission** (`AddStudentModal` + `GuardianPicker`, owner/admin): name, class→section, academic year (defaults current), admission date (today), DOB, gender, address, guardian (pick existing or create inline). Creates guardian→student, reg-no auto-assigned by the DB, navigates to the new detail.
-- **Student detail**: identity (reg-no · class · section · roll) + bio + guardian (name · phone); discount-aware fee table; **payment history** (`StudentPaymentsTable`) with date-range / method / status filters.
+- **Student detail**: identity (reg-no · class · section · roll) + bio + guardian (name · phone) + inline fee-group reassign + **Edit** modal (`EditStudentModal` — name/admission/DOB/gender/address/fee-group/guardian; class/section excluded, they're enrollment-managed); discount-aware fee table; **payment history** (`StudentPaymentsTable`) with date-range / method / status filters.
 - **Fee collection**: Take-Payment modal (create → auto-allocate → receipt), role-gated, partial-failure safe, invalidates dashboard/student/history queries. Receipt persists after success.
 - Feature apis: `features/academic/api.ts` (classes/sections/years), `features/guardians/api.ts` (list/create/get).
 
@@ -80,7 +80,7 @@ Templated bulk billing with fee groups. Migrations **039 + 040** applied. Browse
 
 **Deferred (follow-ups):** inline edit of a structure item's amount (currently remove + re-add); per-item selection in the generate run (currently bills all `monthly` items); termly/one-time billing needs a terms concept or manual month pick; auto-generate one-time fees at admission; a scheduled monthly auto-run; **007 seed wipe doesn't clear the new fee_* tables** (re-seeding leaves structures/groups — add them to the wipe later).
 
-**Demo-data note:** a Hifz-1 Day structure exists; June + August 2026 fees were generated for the 3 Hifz-1 Day students; student #1 (Ahmed) was reassigned to **Residential** during testing (which has no Hifz-1 price list, so he'd show as `no_structure` on a Hifz-1 generate until a Residential structure is added or he's moved back to Day).
+**Demo-data note:** the demo was re-seeded (student ids ~10–18, regs `2026-0001..0008`). Fee groups consolidated to **Residential / Free / Day** — a duplicate "Day" from UI testing (renamed "Day1") was archived and the original Day un-archived via a direct table update (the publishable-key client CAN do table writes, just not DDL). Hifz-1 **Day** price list = Tuition ৳2,000 + Hostel ৳1,500; Jun + Aug 2026 fees were generated for the 3 Hifz-1 Day students. 7 students on Day, **Ahmed on Residential** (no Hifz-1 Residential price list yet → he shows `no_structure` on a Hifz-1 generate until one is added or he's moved to Day). Khadija has gender/address set from an Edit-modal test. **Reminder:** the `007` wipe still doesn't clear `fee_groups`/`fee_structures`/`fee_structure_items` — re-seeding leaves these behind (the source of the earlier duplicate-Day tangle).
 
 ### Original decided design (for reference)
 Owner chose the **fee-groups** variant (different fees within a class).
