@@ -51,6 +51,7 @@ Commits: `20a4545` scaffold → auth → dashboard → students → fee-collecti
 - **Owner dashboard:** KPI cards + overdue-aging bars (PENDING-PAYMENTS card intentionally hidden).
 - **Students:** list (Reg-No/Section/Roll/**Group** columns; Class+Section+Status+Has-dues filters; search+paginate); **admission** modal (bio + guardian picker, owner/admin); **detail** (identity+bio+guardian, inline fee-group reassign, **Edit** modal, discount-aware fee table, **payment history** with filters).
 - **Fees section** (owner/admin/accountant): **Fee Types CRUD** (frequency + revenue-account picker), Fee Groups CRUD, Fee Structures editor (per class → per-group price lists), **Generate Fees** modal (From-structures / Manual, preview→confirm).
+- **Accounts** (Chart of Accounts, owner/admin/accountant): grouped by type; add account (e.g. "Meals Income") + rename non-system accounts; trigger-referenced **system accounts are locked**.
 - **Take Payment** modal (create→allocate→receipt, partial-failure safe, query invalidation).
 - Shared: `formatMoney`, date helpers, `AsyncBoundary`, `StatCard`; feature apis for academic/guardians/fees.
 
@@ -68,7 +69,7 @@ Priority 🔴 high / 🟡 medium / 🟢 nice-to-have · size S/M/L.
 
 **Missing UI (backend exists, no screen)**
 - 🟡 M — **Users management** (list/invite/change-role/deactivate) — currently API-only.
-- 🟢 M — **Chart of Accounts (Accounts) UI** — `GET/POST /accounts` exist but no screen. Surfaced while building Fee Types: you can't create a new revenue account (e.g. "Meals Income") from the UI, so a new fee type must reuse an existing revenue account (the demo "Meals" type points at the generic "Revenue"). _(Fee Types screen itself: ✅ done, frontend `b365b5f`.)_
+- 🟢 S — **Account archive/delete + parent hierarchy.** The Accounts UI (✅ done, frontend `f38ec3c`) does **create + rename** only; system accounts (trigger-referenced) are locked. Deferred: archiving an account (needs guardrails — block if a fee type or journal uses it) and setting `parent_id` for CoA nesting (new accounts are top-level today). _(Fee Types screen: ✅ done `b365b5f`.)_
 - 🟡 L — Expenses, Income, Salary/Payroll, Accounts/Journal, Accounting reports.
 - 🟢 M — Employees, Exams, Attendance, Discounts UI, Notifications.
 
