@@ -85,6 +85,7 @@ Priority 🔴 high / 🟡 medium / 🟢 nice-to-have · size S/M/L.
 
 **Data / infra / ops**
 - 🟡 S — **`007` seed wipe doesn't clear `fee_groups`/`fee_structures`/`fee_structure_items`** → re-seeding strands them (caused the duplicate-"Day" tangle). Add them to the wipe.
+- 🟡 S — **Populate `journal_entries.reference_type` / `reference_id` in all 6 journal triggers.** The columns exist but every trigger leaves them NULL, so journals have **no link to their source row** — which is why the `042` backfill had to match by description/amount. Wiring these (e.g. `'fee_assignment'` + `NEW.id`) enables clean audit, reversals, and exact backfills. (Check the column's CHECK constraint first — it's in the base schema, not a migration.)
 - 🟡 M — **Email transport** for invitations + password reset (tokens currently returned in API response).
 - 🟡 M — **Deployment** (nothing hosted) + prod config (`VITE_API_BASE_URL`, `COOKIE_SECURE=true`).
 - 🟢 M — **Automated tests** (only manual smoke tests today).
@@ -121,6 +122,7 @@ No permissions table; roles are enforced inline per endpoint. Today:
 4. **Receipt collision** (`037`): `generate_receipt_no` self-heals past directly-inserted receipts.
 5. **auto_allocate used GROSS not NET due** → rewrote `services/allocation.py` to use `fee_detail_summary.due`.
 6. **Receipt-view wiped on re-render**: `TakePaymentModal` reset effect now keyed on open only.
+7. **Fee revenue all booked to "Tuition Fees"** (`041`): `trg_fee_assignment_journal` hardcoded the credit and ignored `fee_assignments.account_id`, so Hostel/Exam/Meals income posted as Tuition in the GL (dues/balances unaffected — they derive from the amount, not the account). Fixed to resolve the account from `account_id` (mirrors `trg_income_journal`); `042` backfills historical lines (guarded, unique-match only).
 
 ---
 
@@ -129,6 +131,7 @@ Applied **through 040**. Workflow: I write `migrations/NNN_*.sql` → **user run
 - `038` student identity, guardians, `student_enrollments` (+ reg-no/enrollment triggers).
 - `039` fee groups, fee structures(+items), `students.fee_group_id`, `fee_types.frequency`, `fee_assignments.created_by_id`; seeds Residential/Day/Free + tags students Day.
 - `040` fix `created_by_id` to **UUID** (users.id is UUID — `039` wrongly made it INT).
+- `041` fee journal credits the fee's own revenue account (was hardcoded 'Tuition Fees'). `042` (optional, apply after 041) backfills historical fee journal lines, guarded/unique-match/idempotent.
 
 **Fee generation schema/endpoints (reference):** `fee_groups`; `fee_structures(year,class,fee_group)`; `fee_structure_items(fee_type,amount,frequency,due_day)`. `POST /fees/generate {academic_year_id, month, class_id?, section_id?, fee_type_ids?, dry_run}` → scopes active students via `student_enrollments`, resolves each to their `(class, fee_group)` structure, inserts `fee_assignments` for the chosen items (default: monthly), **skipping already-billed** (the `uq_fee_per_tenant_student_type_month` UNIQUE — NOT partial on is_deleted — is the backstop). Decision: **deleted-fee stays deleted** (generation skips it).
 
