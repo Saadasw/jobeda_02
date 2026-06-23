@@ -36,14 +36,19 @@ def list_fee_types(tenant_id: str = Depends(get_tenant_id)):
 def create_fee_type(payload: FeeTypeCreate, tenant_id: str = Depends(get_financial_tenant_id)):
     """Create a new fee type."""
     try:
-        data = payload.model_dump()
+        data = {k: v for k, v in payload.model_dump().items() if v is not None}
         data["tenant_id"] = tenant_id
         resp = supabase.table("fee_types").insert(data).execute()
         if not resp.data:
             raise HTTPException(status_code=400, detail="Failed to create fee type")
         return resp.data[0]
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        detail = str(e)
+        if "duplicate" in detail.lower() or "unique" in detail.lower():
+            raise HTTPException(status_code=409, detail="A fee type with this name already exists")
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @router.put("/fee-types/{fee_type_id}", response_model=FeeTypeResponse)
@@ -60,13 +65,29 @@ def update_fee_type(fee_type_id: int, payload: FeeTypeUpdate, tenant_id: str = D
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        detail = str(e)
+        if "duplicate" in detail.lower() or "unique" in detail.lower():
+            raise HTTPException(status_code=409, detail="A fee type with this name already exists")
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @router.delete("/fee-types/{fee_type_id}")
 def delete_fee_type(fee_type_id: int, tenant_id: str = Depends(get_financial_tenant_id)):
-    """Soft-delete a fee type."""
+    """Soft-delete a fee type. Blocked if a live fee structure still references it."""
     try:
+        # Guard: don't orphan a fee type that a price list still uses (generation
+        # and the structure editor resolve fee types regardless of is_deleted).
+        in_use = (
+            supabase.table("fee_structure_items").select("id")
+            .eq("tenant_id", tenant_id).eq("fee_type_id", fee_type_id).eq("is_deleted", False)
+            .execute()
+        )
+        if in_use.data:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"This fee type is used in {len(in_use.data)} active price-list line(s). "
+                        "Remove it from those fee structures first."),
+            )
         resp = (
             supabase.table("fee_types")
             .update({"is_deleted": True, "deleted_at": datetime.utcnow().isoformat()})
