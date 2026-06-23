@@ -6,14 +6,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database import supabase
-from dependencies import get_tenant_id
+from dependencies import get_tenant_id, get_financial_tenant_id
 from models.expense import ExpenseCreate, ExpenseResponse
 
 router = APIRouter(prefix="/expenses", tags=["Expenses"])
 
 
 @router.post("", response_model=ExpenseResponse, status_code=201)
-def create_expense(payload: ExpenseCreate, tenant_id: str = Depends(get_tenant_id)):
+def create_expense(payload: ExpenseCreate, tenant_id: str = Depends(get_financial_tenant_id)):
     """
     Record an expense.
     Triggers trg_expense_journal → Dr Expense Account / Cr Cash.
@@ -74,7 +74,7 @@ def get_expense(expense_id: int, tenant_id: str = Depends(get_tenant_id)):
 
 
 @router.delete("/{expense_id}")
-def delete_expense(expense_id: int, tenant_id: str = Depends(get_tenant_id)):
+def delete_expense(expense_id: int, tenant_id: str = Depends(get_financial_tenant_id)):
     """Soft-delete an expense (archive + reversal should be handled separately)."""
     try:
         resp = (

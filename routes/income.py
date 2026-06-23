@@ -8,14 +8,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database import supabase
-from dependencies import get_tenant_id
+from dependencies import get_tenant_id, get_financial_tenant_id
 from models.income import IncomeCreate, IncomeResponse
 
 router = APIRouter(prefix="/income", tags=["Income"])
 
 
 @router.post("", response_model=IncomeResponse, status_code=201)
-def create_income(payload: IncomeCreate, tenant_id: str = Depends(get_tenant_id)):
+def create_income(payload: IncomeCreate, tenant_id: str = Depends(get_financial_tenant_id)):
     """
     Record non-student income (donation, zakat, mahfil, etc.).
     The account_id should reference a revenue-type account.
@@ -85,7 +85,7 @@ def get_income(income_id: int, tenant_id: str = Depends(get_tenant_id)):
 
 
 @router.delete("/{income_id}")
-def delete_income(income_id: int, tenant_id: str = Depends(get_tenant_id)):
+def delete_income(income_id: int, tenant_id: str = Depends(get_financial_tenant_id)):
     """Soft-delete an income record."""
     try:
         resp = (
