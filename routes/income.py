@@ -39,25 +39,24 @@ def create_income(payload: IncomeCreate, tenant_id: str = Depends(get_financial_
 
 @router.get("")
 def list_income(
+    account_id: Optional[int] = Query(default=None),
+    from_date: Optional[str] = Query(default=None, alias="from"),
+    to_date: Optional[str] = Query(default=None, alias="to"),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=1000),
     tenant_id: str = Depends(get_tenant_id),
 ):
-    """
-    List non-student income records (paginated).
-    Queries the dedicated income table directly.
-    """
+    """List non-student income records with optional filters and pagination."""
     try:
         offset = (page - 1) * limit
-        resp = (
-            supabase.table("income")
-            .select("*")
-            .eq("tenant_id", tenant_id)
-            .eq("is_deleted", False)
-            .order("date", desc=True)
-            .range(offset, offset + limit - 1)
-            .execute()
-        )
+        query = supabase.table("income").select("*").eq("tenant_id", tenant_id).eq("is_deleted", False)
+        if account_id:
+            query = query.eq("account_id", account_id)
+        if from_date:
+            query = query.gte("date", from_date)
+        if to_date:
+            query = query.lte("date", to_date)
+        resp = query.order("date", desc=True).range(offset, offset + limit - 1).execute()
         return resp.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

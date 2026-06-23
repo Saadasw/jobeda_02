@@ -40,7 +40,7 @@ def list_expenses(
     from_date: Optional[str] = Query(default=None, alias="from"),
     to_date: Optional[str] = Query(default=None, alias="to"),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=1000),
     tenant_id: str = Depends(get_tenant_id),
 ):
     """List expenses with optional filters and pagination."""
