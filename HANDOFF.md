@@ -52,6 +52,7 @@ Commits: `20a4545` scaffold → auth → dashboard → students → fee-collecti
 - **Students:** list (Reg-No/Section/Roll/**Group** columns; Class+Section+Status+Has-dues filters; search+paginate); **admission** modal (bio + guardian picker, owner/admin); **detail** (identity+bio+guardian, inline fee-group reassign, **Edit** modal, discount-aware fee table, **payment history** with filters).
 - **Fees section** (owner/admin/accountant): **Fee Types CRUD** (frequency + revenue-account picker), Fee Groups CRUD, Fee Structures editor (per class → per-group price lists), **Generate Fees** modal (From-structures / Manual, preview→confirm).
 - **Accounts** (Chart of Accounts, owner/admin/accountant): grouped by type; add account (e.g. "Meals Income") + rename non-system accounts; trigger-referenced **system accounts are locked**.
+- **Expenses / Income** (owner/admin/accountant): record money out / non-fee money in (date · account · amount · note) with running total; posts journals via triggers. Shared `MoneyEntryPage` component. No void/reversal yet (soft-delete wouldn't reverse the journal).
 - **Take Payment** modal (create→allocate→receipt, partial-failure safe, query invalidation).
 - Shared: `formatMoney`, date helpers, `AsyncBoundary`, `StatCard`; feature apis for academic/guardians/fees.
 
@@ -63,14 +64,14 @@ Stack: React 18 + TS strict · Vite · Mantine 7 · TanStack Query · React Rout
 Priority 🔴 high / 🟡 medium / 🟢 nice-to-have · size S/M/L.
 
 **Security / hardening**
-- 🔴 S — **Role-gate the open writes.** Student create/edit/delete, academic CRUD, salary/payroll/expense/income, exams/attendance are **not role-gated** (any logged-in user can do them). Make teacher/viewer truly read-only. (Only fees/payments/discounts/guardians/users writes are gated today — see §6.)
+- 🔴 S — **Role-gate the remaining open writes.** Student create/edit/delete, academic CRUD, salary/payroll, exams/attendance are **not role-gated** (any logged-in user can do them). Make teacher/viewer truly read-only. (Gated today: fees, payments, discounts, guardians, users, **expenses, income** — see §6.)
 - 🟡 M — Optional `role_permissions` table (data-driven) instead of scattered `require_roles`.
 - 🟢 S — Tighten the `X-Tenant-ID` header fallback (lets non-financial endpoints be hit without a JWT).
 
 **Missing UI (backend exists, no screen)**
 - 🟡 M — **Users management** (list/invite/change-role/deactivate) — currently API-only.
 - 🟢 S — **Account archive/delete + parent hierarchy.** The Accounts UI (✅ done, frontend `f38ec3c`) does **create + rename** only; system accounts (trigger-referenced) are locked. Deferred: archiving an account (needs guardrails — block if a fee type or journal uses it) and setting `parent_id` for CoA nesting (new accounts are top-level today). _(Fee Types screen: ✅ done `b365b5f`.)_
-- 🟡 L — Expenses, Income, Salary/Payroll, Accounts/Journal, Accounting reports.
+- 🟡 M — **Salary/Payroll, Journal viewer, Accounting reports** (income statement / balance sheet / trial balance). _(Expenses + Income ✅ done `7aefced`; Accounts UI ✅ done.)_
 - 🟢 M — Employees, Exams, Attendance, Discounts UI, Notifications.
 
 **Students / enrollment**
