@@ -8,8 +8,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database import supabase
-from dependencies import get_tenant_id
-from models.student import StudentCreate, StudentUpdate, StudentResponse
+from dependencies import get_tenant_id, require_roles
+from models.student import StudentCreate, StudentUpdate, StudentResponse, RollAssignRequest
 from models.payment import StudentFinancialSummary
 from models.common import PaginatedResponse
 
@@ -156,6 +156,67 @@ def create_student(student: StudentCreate, tenant_id: str = Depends(get_tenant_i
         return resp.data[0]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/assign-rolls")
+def assign_rolls(payload: RollAssignRequest, user: dict = Depends(require_roles("owner", "admin"))):
+    """
+    Assign roll numbers to a class-section's roster for a given academic year.
+    Roll is unique per (year, class, section). We clear the batch's rolls first
+    (NULL is excluded from the unique index), so re-ordering within the section
+    can't transiently clash, then set the final values.
+    """
+    tenant_id = user["tenant_id"]
+    assignments = payload.assignments
+    if not assignments:
+        raise HTTPException(status_code=400, detail="No assignments provided")
+
+    # Validate: rolls >= 1 and no duplicate roll within the submitted batch.
+    seen = set()
+    for a in assignments:
+        if a.roll_no is not None:
+            if a.roll_no < 1:
+                raise HTTPException(status_code=400, detail="Roll numbers must be 1 or greater")
+            if a.roll_no in seen:
+                raise HTTPException(status_code=409, detail=f"Duplicate roll {a.roll_no} in this batch")
+            seen.add(a.roll_no)
+
+    student_ids = [a.student_id for a in assignments]
+
+    def _scope(q):
+        return (
+            q.eq("tenant_id", tenant_id)
+            .eq("academic_year_id", payload.academic_year_id)
+            .eq("class_id", payload.class_id)
+            .eq("section_id", payload.section_id)
+        )
+
+    try:
+        # 1) Clear the batch's rolls in this section first.
+        _scope(
+            supabase.table("student_enrollments").update({"roll_no": None}).in_("student_id", student_ids)
+        ).execute()
+
+        # 2) Set each final roll (skip the ones left blank / unassigned).
+        assigned = 0
+        for a in assignments:
+            if a.roll_no is None:
+                continue
+            resp = _scope(
+                supabase.table("student_enrollments").update({"roll_no": a.roll_no}).eq("student_id", a.student_id)
+            ).execute()
+            assigned += len(resp.data)
+        return {"message": "Rolls assigned", "assigned": assigned, "cleared": len(student_ids)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        detail = str(e)
+        if "uq_enrollment_roll" in detail or "duplicate" in detail.lower() or "unique" in detail.lower():
+            raise HTTPException(
+                status_code=409,
+                detail="A roll number is already used by another student in this class & section",
+            )
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @router.get("/{student_id}", response_model=StudentResponse)
