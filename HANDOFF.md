@@ -75,7 +75,7 @@ Priority 🔴 high / 🟡 medium / 🟢 nice-to-have · size S/M/L.
 - 🟢 M — Employees, Exams, Attendance, Discounts UI, Notifications.
 
 **Students / enrollment**
-- 🔴 M — **Roll assignment** (per section). `create_student` doesn't take a roll → Roll column always "—". Needs an endpoint (e.g. `PUT /students/{id}/enrollment` or bulk assign) + UI.
+- ✅ **Roll assignment** (per section) — DONE (backend `306b0ae`, frontend `765bb56`). `POST /students/assign-rolls` (owner/admin) sets `student_enrollments.roll_no` for a (year, class, section) roster, clear-then-set so swaps don't clash; UI = "Assign rolls" button on the filtered list → roster modal with auto-number + dup guard. _(v1 limits: section required — section-less classes not offered; clear-then-set is 2 calls, not a single txn — an atomic RPC is the hardening path.)_
 - 🔴 M — **Class transfer / promotion flow** that updates the per-year **enrollment** (the Edit modal omits class for exactly this reason).
 - 🟡 L — **Contract-phase migration:** flip readers (`student_due_summary`, `fee_detail_summary`, `generate_report_card` — still reads `students.class_id`! — `compute_class_positions`, attendance summaries) onto `student_enrollments`; then retire legacy `students.class_id/section_id`. **Fixes a latent bug:** promoting a student currently rewrites their *historical* report cards. (Could also move `fee_group_id` to the enrollment for per-year groups.)
 
